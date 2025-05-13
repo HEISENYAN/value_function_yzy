@@ -93,7 +93,7 @@ Below, we provide simple examples to show how to use Qwen2.5-VL with 🤖 ModelS
 
 The code of Qwen2.5-VL has been in the latest Hugging face transformers and we advise you to build from source with command:
 ```
-pip install git+https://github.com/huggingface/transformers accelerate
+pip install transformers==4.51.3 accelerate
 ```
 or you might encounter the following error:
 ```
