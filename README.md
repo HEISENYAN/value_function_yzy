@@ -840,7 +840,10 @@ You can also check [vLLM official documentation](https://docs.vllm.ai/en/latest/
 pip install git+https://github.com/huggingface/transformers
 pip install accelerate
 pip install qwen-vl-utils==0.0.14
-pip install 'vllm>0.10.2'
+# pip install 'vllm>0.10.2' # If this is not working use the below one. 
+uv pip install -U vllm \
+    --torch-backend=auto \
+    --extra-index-url https://wheels.vllm.ai/nightly
 ```
 
 ### Online Serving
