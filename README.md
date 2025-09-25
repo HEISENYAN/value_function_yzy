@@ -733,6 +733,7 @@ Also, you should have a hardware that is compatible with Flash-Attention 2. Read
 To load and run a model using Flash Attention-2, simply add `attn_implementation="flash_attention_2"` when loading the model as follows:
 
 ```python
+import torch
 from transformers import AutoModelForImageTextToText
 
 model = AutoModelForImageTextToText.from_pretrained(
