@@ -510,7 +510,7 @@ class DataCollatorForSupervisedDataset(object):
         position_ids = pad_and_cat(position_ids)
         input_ids = input_ids[:, : self.tokenizer.model_max_length]
         labels = labels[:, : self.tokenizer.model_max_length]
-        position_ids = position_ids[:, : self.tokenizer.model_max_length]
+        position_ids = position_ids[:, :, : self.tokenizer.model_max_length]
         batch = dict(
             input_ids=input_ids,
             labels=labels,
