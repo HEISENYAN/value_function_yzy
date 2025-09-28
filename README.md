@@ -1036,7 +1036,7 @@ if __name__ == '__main__':
     llm = LLM(
         model=checkpoint_path,
         trust_remote_code=True,
-        gpu_memory_utilization=0.97,
+        gpu_memory_utilization=0.70,
         enforce_eager=False,
         quantization="fp8",
         tensor_parallel_size=torch.cuda.device_count(),
