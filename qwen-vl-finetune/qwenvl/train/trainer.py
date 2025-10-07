@@ -1,22 +1,16 @@
-import os
 from typing import Dict, List, Optional, Sequence, Tuple, Callable
 
-import datasets
 import torch
-import torch.nn as nn
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
-from torch.utils.data import DataLoader, Sampler
 from transformers import Trainer
 from transformers.cache_utils import Cache
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.utils.deprecation import deprecate_kwarg
 from transformers.processing_utils import Unpack
 from transformers.models.qwen2_vl.modeling_qwen2_vl import (
     Qwen2VisionTransformerPretrainedModel,
     Qwen2VLModel,
     apply_multimodal_rotary_pos_emb,
-    eager_attention_forward,
 )
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VisionTransformerPretrainedModel,

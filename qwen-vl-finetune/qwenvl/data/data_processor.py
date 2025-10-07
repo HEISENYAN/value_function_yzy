@@ -1,5 +1,3 @@
-import os
-import copy
 import json
 import random
 import logging
@@ -45,7 +43,7 @@ def _make_abs_paths(base: Path, files: str) -> str:
 
 def update_processor_pixels(processor, data_args):
     logger = logging.getLogger(__name__)
-    
+
     # --- Image Processor ---
     ip = processor.image_processor
     rank0_print("=== BEFORE IMAGE PROCESSOR PARAMETERS ===")
@@ -54,27 +52,31 @@ def update_processor_pixels(processor, data_args):
     rank0_print(f"ip.size: {ip.size}")
     rank0_print(f"Image size (shortest_edge): {ip.size.get('shortest_edge', 'N/A')}")
     rank0_print(f"Image size (longest_edge):  {ip.size.get('longest_edge', 'N/A')}")
-    
-    if hasattr(ip, 'min_pixels') and hasattr(ip, 'max_pixels'):
+
+    if hasattr(ip, "min_pixels") and hasattr(ip, "max_pixels"):
         ip.min_pixels = data_args.min_pixels
         ip.max_pixels = data_args.max_pixels
         rank0_print(f"✅ Updated image_processor min_pixels to {data_args.min_pixels}")
         rank0_print(f"✅ Updated image_processor max_pixels to {data_args.max_pixels}")
-    
-    if hasattr(ip, 'size') and isinstance(ip.size, dict):
-        ip.size['shortest_edge'] = data_args.min_pixels
-        ip.size['longest_edge'] = data_args.max_pixels
-        rank0_print(f"✅ Updated image_processor size['shortest_edge'] to {data_args.min_pixels}")
-        rank0_print(f"✅ Updated image_processor size['longest_edge'] to {data_args.max_pixels}")
-    
+
+    if hasattr(ip, "size") and isinstance(ip.size, dict):
+        ip.size["shortest_edge"] = data_args.min_pixels
+        ip.size["longest_edge"] = data_args.max_pixels
+        rank0_print(
+            f"✅ Updated image_processor size['shortest_edge'] to {data_args.min_pixels}"
+        )
+        rank0_print(
+            f"✅ Updated image_processor size['longest_edge'] to {data_args.max_pixels}"
+        )
+
     rank0_print("=== AFTER IMAGE PROCESSOR PARAMETERS ===")
     rank0_print(f"Image min_pixels: {getattr(ip, 'min_pixels', 'N/A')}")
     rank0_print(f"Image max_pixels: {getattr(ip, 'max_pixels', 'N/A')}")
     rank0_print(f"Image size (shortest_edge): {ip.size.get('shortest_edge', 'N/A')}")
     rank0_print(f"Image size (longest_edge):  {ip.size.get('longest_edge', 'N/A')}")
-    
+
     # --- Video Processor ---
-    if hasattr(processor, 'video_processor') and processor.video_processor is not None:
+    if hasattr(processor, "video_processor") and processor.video_processor is not None:
         vp = processor.video_processor
         rank0_print("\n=== BEFORE VIDEO PROCESSOR PARAMETERS ===")
         rank0_print(f"Video min_pixels: {getattr(vp, 'min_pixels', 'N/A')}")
@@ -82,46 +84,60 @@ def update_processor_pixels(processor, data_args):
         rank0_print(f"Video min_frames: {getattr(vp, 'min_frames', 'N/A')}")
         rank0_print(f"Video max_frames: {getattr(vp, 'max_frames', 'N/A')}")
         rank0_print(f"Video fps: {getattr(vp, 'fps', 'N/A')}")
-        rank0_print(f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}")
+        rank0_print(
+            f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
+        )
         rank0_print(f"Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}")
-        
-        if hasattr(vp, 'min_pixels') and hasattr(vp, 'max_pixels'):
+
+        if hasattr(vp, "min_pixels") and hasattr(vp, "max_pixels"):
             vp.min_pixels = data_args.video_min_pixels
             vp.max_pixels = data_args.video_max_pixels
-            rank0_print(f"✅ Updated Qwen2-VL video_processor min_pixels to {data_args.video_min_pixels}")
-            rank0_print(f"✅ Updated Qwen2-VL video_processor max_pixels to {data_args.video_max_pixels}")
-        
-        if hasattr(vp, 'min_frames') and hasattr(vp, 'max_frames'):
+            rank0_print(
+                f"✅ Updated Qwen2-VL video_processor min_pixels to {data_args.video_min_pixels}"
+            )
+            rank0_print(
+                f"✅ Updated Qwen2-VL video_processor max_pixels to {data_args.video_max_pixels}"
+            )
+
+        if hasattr(vp, "min_frames") and hasattr(vp, "max_frames"):
             vp.min_frames = data_args.video_min_frames
             vp.max_frames = data_args.video_max_frames
-            rank0_print(f"✅ Updated video_processor min_frames to {data_args.video_min_frames}")
-            rank0_print(f"✅ Updated video_processor max_frames to {data_args.video_max_frames}")
-            
-        if hasattr(vp, 'fps'):
+            rank0_print(
+                f"✅ Updated video_processor min_frames to {data_args.video_min_frames}"
+            )
+            rank0_print(
+                f"✅ Updated video_processor max_frames to {data_args.video_max_frames}"
+            )
+
+        if hasattr(vp, "fps"):
             vp.fps = data_args.video_fps
             rank0_print(f"✅ Updated video_processor fps to {data_args.video_fps}")
-            
-        if hasattr(vp, 'size') and isinstance(vp.size, dict):
-            vp.size['shortest_edge'] = data_args.video_min_pixels
-            vp.size['longest_edge'] = data_args.video_max_pixels
-            rank0_print(f"✅ Updated Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}")
-            rank0_print(f"✅ Updated Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}")
-        
+
+        if hasattr(vp, "size") and isinstance(vp.size, dict):
+            vp.size["shortest_edge"] = data_args.video_min_pixels
+            vp.size["longest_edge"] = data_args.video_max_pixels
+            rank0_print(
+                f"✅ Updated Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
+            )
+            rank0_print(
+                f"✅ Updated Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}"
+            )
+
         rank0_print("=== AFTER VIDEO PROCESSOR PARAMETERS ===")
         rank0_print(f"Video min_pixels: {getattr(vp, 'min_pixels', 'N/A')}")
         rank0_print(f"Video max_pixels: {getattr(vp, 'max_pixels', 'N/A')}")
         rank0_print(f"Video min_frames: {getattr(vp, 'min_frames', 'N/A')}")
         rank0_print(f"Video max_frames: {getattr(vp, 'max_frames', 'N/A')}")
         rank0_print(f"Video fps: {getattr(vp, 'fps', 'N/A')}")
-        rank0_print(f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}")
+        rank0_print(
+            f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
+        )
         rank0_print(f"Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}")
-    
+
     return processor
 
-def _build_messages(
-    item: Dict[str, Any],
-    base_path: Path
-) -> List[Dict[str, Any]]:
+
+def _build_messages(item: Dict[str, Any], base_path: Path) -> List[Dict[str, Any]]:
     # Extract and normalize images and videos
     images = item.get("image") or []
     if isinstance(images, str):
@@ -147,7 +163,7 @@ def _build_messages(
         if role == "user":
             content = []
             # Split text by <image> or <video> placeholders while keeping delimiters
-            text_parts = re.split(r'(<image>|<video>)', text)
+            text_parts = re.split(r"(<image>|<video>)", text)
 
             for seg in text_parts:
                 if seg == "<image>":
@@ -172,11 +188,16 @@ def _build_messages(
 
     # Check for unused media files
     if image_pool:
-        raise ValueError(f"{len(image_pool)} image(s) remain unused (not consumed by placeholders)")
+        raise ValueError(
+            f"{len(image_pool)} image(s) remain unused (not consumed by placeholders)"
+        )
     if video_pool:
-        raise ValueError(f"{len(video_pool)} video(s) remain unused (not consumed by placeholders)")
+        raise ValueError(
+            f"{len(video_pool)} video(s) remain unused (not consumed by placeholders)"
+        )
 
     return messages
+
 
 def preprocess_qwen_visual(
     sources,
@@ -184,24 +205,21 @@ def preprocess_qwen_visual(
 ) -> Dict:
     if len(sources) != 1:
         raise ValueError(f"Expected 1 source, got {len(sources)}")
-    
+
     source = sources[0]
     base_path = Path(source.get("data_path", ""))
     messages = _build_messages(source, base_path)
-        
+
     full_result = processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt"
+        messages, tokenize=True, return_dict=True, return_tensors="pt"
     )
-    
+
     input_ids = full_result["input_ids"]
     if isinstance(input_ids, list):
         input_ids = torch.tensor(input_ids).unsqueeze(0)
-    
+
     labels = torch.full_like(input_ids, IGNORE_INDEX)
-    
+
     input_ids_flat = input_ids[0].tolist()
     L = len(input_ids_flat)
     pos = 0
@@ -212,9 +230,15 @@ def preprocess_qwen_visual(
             while ans_end < L and input_ids_flat[ans_end] != 151645:
                 ans_end += 1
             if ans_end < L:
-                labels[0, ans_start:ans_end+2] = input_ids[0, ans_start:ans_end+2]
+                labels[0, ans_start : ans_end + 2] = input_ids[
+                    0, ans_start : ans_end + 2
+                ]
                 pos = ans_end
         pos += 1
+
+    full_result["labels"] = labels
+    full_result["input_ids"] = input_ids
+    return full_result
 
 
 class LazySupervisedDataset(Dataset):
@@ -368,7 +392,7 @@ class LazySupervisedDataset(Dataset):
             sources,
             self.processor,
         )
-        
+
         seq_len = data_dict["input_ids"][0].size(0)
 
         if "image_grid_thw" in data_dict:
@@ -377,13 +401,14 @@ class LazySupervisedDataset(Dataset):
                 grid_thw = [grid_thw]
         else:
             grid_thw = None
-        
+
         if "video_grid_thw" in data_dict:
             video_grid_thw = data_dict.get("video_grid_thw")
             if not isinstance(video_grid_thw, Sequence):
                 video_grid_thw = [video_grid_thw]
             second_per_grid_ts = [
-                self.data_args.processor.video_processor.temporal_patch_size / self.data_args.processor.video_processor.fps
+                self.data_args.processor.video_processor.temporal_patch_size
+                / self.data_args.processor.video_processor.fps
             ] * len(video_grid_thw)
         else:
             video_grid_thw = None
@@ -407,11 +432,13 @@ class LazySupervisedDataset(Dataset):
         )
 
         labels = data_dict["labels"][0]
-        labels = [tid if tid != -100 else self.processor.tokenizer.pad_token_id for tid in labels]
+        labels = [
+            tid if tid != -100 else self.processor.tokenizer.pad_token_id
+            for tid in labels
+        ]
         label = self.processor.tokenizer.decode(labels, skip_special_tokens=False)
 
         return data_dict
-
 
     def _get_packed_item(self, sources) -> Dict[str, torch.Tensor]:
 
@@ -442,20 +469,52 @@ class LazySupervisedDataset(Dataset):
                 "input_ids": input_ids,
                 "labels": labels,
                 "position_ids": position_ids,
-                "attention_mask": attention_mask if attention_mask else None
+                "attention_mask": attention_mask if attention_mask else None,
             }
-            
+
             if any("pixel_values" in d for d in data_list):
-                new_data_dict.update({
-                    "pixel_values": torch.cat([d["pixel_values"] for d in data_list if "pixel_values" in d], dim=0),
-                    "image_grid_thw": torch.cat([d["image_grid_thw"] for d in data_list if "image_grid_thw" in d], dim=0)
-                })
-            
+                new_data_dict.update(
+                    {
+                        "pixel_values": torch.cat(
+                            [
+                                d["pixel_values"]
+                                for d in data_list
+                                if "pixel_values" in d
+                            ],
+                            dim=0,
+                        ),
+                        "image_grid_thw": torch.cat(
+                            [
+                                d["image_grid_thw"]
+                                for d in data_list
+                                if "image_grid_thw" in d
+                            ],
+                            dim=0,
+                        ),
+                    }
+                )
+
             if any("pixel_values_videos" in d for d in data_list):
-                new_data_dict.update({
-                    "pixel_values_videos": torch.cat([d["pixel_values_videos"] for d in data_list if "pixel_values_videos" in d], dim=0),
-                    "video_grid_thw": torch.cat([d["video_grid_thw"] for d in data_list if "video_grid_thw" in d], dim=0)
-                })
+                new_data_dict.update(
+                    {
+                        "pixel_values_videos": torch.cat(
+                            [
+                                d["pixel_values_videos"]
+                                for d in data_list
+                                if "pixel_values_videos" in d
+                            ],
+                            dim=0,
+                        ),
+                        "video_grid_thw": torch.cat(
+                            [
+                                d["video_grid_thw"]
+                                for d in data_list
+                                if "video_grid_thw" in d
+                            ],
+                            dim=0,
+                        ),
+                    }
+                )
             return new_data_dict
 
 
@@ -617,9 +676,7 @@ class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset
         return batch
 
 
-def make_supervised_data_module(
-    processor, data_args
-) -> Dict:
+def make_supervised_data_module(processor, data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     train_dataset = LazySupervisedDataset(processor, data_args=data_args)
     if data_args.data_flatten or data_args.data_packing:

@@ -19,9 +19,6 @@ import logging
 import pathlib
 import torch
 import transformers
-import json
-from typing import Dict
-import shutil
 import sys
 from pathlib import Path
 
@@ -31,7 +28,6 @@ sys.path.append(str(project_root))
 from trainer import replace_qwen2_vl_attention_class
 
 from transformers import (
-    AutoConfig,
     Qwen2VLForConditionalGeneration,
     Qwen2_5_VLForConditionalGeneration,
     Qwen3VLForConditionalGeneration,
@@ -43,7 +39,7 @@ from qwenvl.train.argument import (
     DataArguments,
     TrainingArguments,
 )
-from transformers import AutoTokenizer, AutoProcessor, Qwen2VLImageProcessor, Trainer
+from transformers import AutoProcessor, Trainer
 
 local_rank = None
 
