@@ -1,14 +1,12 @@
 # Dockerfile of qwenllm/qwenvl:qwen3vl-cu128
-FROM vllm/vllm-openai:nightly-7ed82d1974837957a3bfb6d576b9cffba24d31ae as base
+FROM vllm/vllm-openai:v0.11.0 as base
 ENTRYPOINT []
 
-# Install requirements
 RUN ln -sf /usr/bin/python3 /usr/bin/python &&  pip install --no-cache-dir \
     git+https://github.com/huggingface/transformers \
-    qwen-vl-utils==0.0.13 \
+    qwen-vl-utils==0.0.14 \
     torchcodec==0.7 \
-    gradio==5.46.1 \
-    gradio_client==1.13.1 \
+    gradio==5.49.1 \
     transformers-stream-generator==0.0.5 \
     accelerate
 

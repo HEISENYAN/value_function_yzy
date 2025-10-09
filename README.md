@@ -873,8 +873,10 @@ vllm serve Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
 * SGLang server
 ```
 python -m sglang.launch_server \
-   --model-path Qwen/Qwen3-VL-235B-A22B-Instruct\
-   --tp 8 
+   --model-path Qwen/Qwen3-VL-235B-A22B-Instruct \
+   --host 0.0.0.0 \
+   --port 22002 \
+   --tp 8
 ```
 * Image Request Example
 ```python
