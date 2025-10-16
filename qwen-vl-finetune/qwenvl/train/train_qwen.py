@@ -159,11 +159,29 @@ def train(attn_implementation="flash_attention_2"):
         padding_side="right",
         use_fast=False,
     )
-    set_model(model_args, model)
 
-    if torch.distributed.get_rank() == 0:
-        model.visual.print_trainable_parameters()
-        model.model.print_trainable_parameters()
+    if training_args.lora_enable:
+        from peft import LoraConfig, get_peft_model, TaskType
+        print("LoRA enabled")
+
+        for p in model.parameters():
+            p.requires_grad = False
+
+        lora_config = LoraConfig(
+            r=training_args.lora_r or 64,
+            lora_alpha=training_args.lora_alpha or 128,
+            lora_dropout=training_args.lora_dropout or 0.05,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # Qwen 的 attention 线性层
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+        )
+        model = get_peft_model(model, lora_config)
+    else:
+        set_model(model_args, model)
+
+        if torch.distributed.get_rank() == 0:
+            model.visual.print_trainable_parameters()
+            model.model.print_trainable_parameters()
     
     data_module = make_supervised_data_module(processor, data_args=data_args)
     trainer = Trainer(

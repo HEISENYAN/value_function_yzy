@@ -35,6 +35,7 @@ You could use follow version of packages:
 - `triton==3.2.0`
 - `accelerate==1.7.0`
 - `torchcodec==0.2`
+- `peft==0.17.1`
 
 ## Custom Dataset Configuration
 
@@ -293,7 +294,13 @@ torchrun --nproc_per_node=$NPROC_PER_NODE \
          --logging_steps 10 \               # Log metrics interval
          --save_steps 500 \                 # Checkpoint save interval
          --save_total_limit 3 \             # Max checkpoints to keep
-         
+
+         # Lora Config
+         --lora_enable True \                 # [TrainingArguments] Enable LoRA
+         --lora_r 8 \                         # [TrainingArguments] LoRA r
+         --lora_alpha 16 \                    # [TrainingArguments] LoRA alpha 
+         --lora_dropout 0.0 \                # [TrainingArguments] LoRA dropout
+
          # Advanced Options
          --deepspeed zero3.json \           # DeepSpeed configuration
 ```
