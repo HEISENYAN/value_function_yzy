@@ -880,6 +880,7 @@ vllm serve Qwen/Qwen3-VL-235B-A22B-Instruct-FP8 \
   --mm-encoder-tp-mode data \
   --enable-expert-parallel \
   --async-scheduling \
+  --media-io-kwargs '{"video": {"num_frames": -1}}' \
   --host 0.0.0.0 \
   --port 22002
 ```
@@ -959,10 +960,18 @@ messages = [
 ]
 
 start = time.time()
+
+# When vLLM is launched with `--media-io-kwargs '{"video": {"num_frames": -1}}'`,
+# video frame sampling can be configured via `extra_body` (e.g., by setting `fps`).
+# This feature is currently supported only in vLLM.
+#
+# By default, `fps=2` and `do_sample_frames=True`.
+# With `do_sample_frames=True`, you can customize the `fps` value to set your desired video sampling rate.
 response = client.chat.completions.create(
     model="Qwen/Qwen3-VL-235B-A22B-Instruct-FP8",
     messages=messages,
-    max_tokens=2048
+    max_tokens=2048,
+    extra_body={"mm_processor_kwargs": {"fps": 2, "do_sample_frames": True}}
 )
 
 print(f"Response costs: {time.time() - start:.2f}s")
