@@ -127,10 +127,9 @@ We are preparing [cookbooks](https://github.com/QwenLM/Qwen3-VL/tree/main/cookbo
 
 Below, we provide simple examples to show how to use Qwen3-VL with 🤖 ModelScope and 🤗 Transformers.
 
-The code of Qwen3-VL has been in the latest Hugging face transformers and we advise you to build from source with command:
 ```
-pip install git+https://github.com/huggingface/transformers
-# pip install transformers==4.57.0 # currently, V4.57.0 is not released
+# The Qwen3-VL model requires transformers >= 4.57.0
+pip install "transformers>=4.57.0"
 ```
 
 ### 🤖 ModelScope
