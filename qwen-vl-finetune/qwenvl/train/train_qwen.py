@@ -25,7 +25,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from trainer import replace_qwen2_vl_attention_class
+# from trainer import replace_qwen2_vl_attention_class
 
 from transformers import (
     Qwen2VLForConditionalGeneration,
@@ -40,6 +40,7 @@ from qwenvl.train.argument import (
     TrainingArguments,
 )
 from transformers import AutoProcessor, Trainer
+from qwenvl.train.eval_qwen import evaluate
 
 local_rank = None
 
@@ -89,7 +90,7 @@ def set_model(model_args, model):
         model.lm_head.requires_grad = False
 
 
-def train(attn_implementation="flash_attention_2"):
+def train(attn_implementation=None):
     global local_rank
 
     parser = transformers.HfArgumentParser(
@@ -100,46 +101,54 @@ def train(attn_implementation="flash_attention_2"):
     local_rank = training_args.local_rank
     os.makedirs(training_args.output_dir, exist_ok=True)
 
-    if "qwen3" in model_args.model_name_or_path.lower() and "a" in Path(model_args.model_name_or_path.rstrip("/")).name.lower():
-        model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,
             attn_implementation=attn_implementation,
             dtype=(torch.bfloat16 if training_args.bf16 else None),
         )
-        data_args.model_type = "qwen3vl"
-    elif "qwen3" in model_args.model_name_or_path.lower():
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            dtype=(torch.bfloat16 if training_args.bf16 else None),
-        )
-        data_args.model_type = "qwen3vl"
-    elif "qwen2.5" in model_args.model_name_or_path.lower():
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            dtype=(torch.bfloat16 if training_args.bf16 else None),
-        )
-        data_args.model_type = "qwen2.5vl"
-    else:
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            attn_implementation=attn_implementation,
-            dtype=(torch.bfloat16 if training_args.bf16 else None),
-        )
-        data_args.model_type = "qwen2vl"
+    data_args.model_type = "qwen2.5vl"
+
+    # if "qwen3" in model_args.model_name_or_path.lower() and "a" in Path(model_args.model_name_or_path.rstrip("/")).name.lower():
+    #     model = Qwen3VLMoeForConditionalGeneration.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         cache_dir=training_args.cache_dir,
+    #         attn_implementation=attn_implementation,
+    #         dtype=(torch.bfloat16 if training_args.bf16 else None),
+    #     )
+    #     data_args.model_type = "qwen3vl"
+    # elif "qwen3" in model_args.model_name_or_path.lower():
+    #     model = Qwen3VLForConditionalGeneration.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         cache_dir=training_args.cache_dir,
+    #         attn_implementation=attn_implementation,
+    #         dtype=(torch.bfloat16 if training_args.bf16 else None),
+    #     )
+    #     data_args.model_type = "qwen3vl"
+    # elif "qwen2.5" in model_args.model_name_or_path.lower():
+    #     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         cache_dir=training_args.cache_dir,
+    #         attn_implementation=attn_implementation,
+    #         dtype=(torch.bfloat16 if training_args.bf16 else None),
+    #     )
+    #     data_args.model_type = "qwen2.5vl"
+    # else:
+    #     model = Qwen2VLForConditionalGeneration.from_pretrained(
+    #         model_args.model_name_or_path,
+    #         cache_dir=training_args.cache_dir,
+    #         attn_implementation=attn_implementation,
+    #         dtype=(torch.bfloat16 if training_args.bf16 else None),
+    #     )
+    #     data_args.model_type = "qwen2vl"
 
     print(f'the initlized model is {model_args.model_name_or_path} the class is {model.__class__.__name__}')
     processor = AutoProcessor.from_pretrained(
         model_args.model_name_or_path,
     )
 
-    if data_args.data_flatten or data_args.data_packing:
-        replace_qwen2_vl_attention_class()
+    # if data_args.data_flatten or data_args.data_packing:
+    #     replace_qwen2_vl_attention_class()
     model.config.use_cache = False
 
     if training_args.gradient_checkpointing:
@@ -179,11 +188,26 @@ def train(attn_implementation="flash_attention_2"):
     else:
         set_model(model_args, model)
 
-        if torch.distributed.get_rank() == 0:
-            model.visual.print_trainable_parameters()
-            model.model.print_trainable_parameters()
-    
-    data_module = make_supervised_data_module(processor, data_args=data_args)
+        # if torch.distributed.get_rank() == 0:
+        #     model.visual.print_trainable_parameters()
+        #     model.model.print_trainable_parameters()
+
+    # Create value tokenizer for evaluation
+    if data_args.use_value_tokenizer:
+        from qwenvl.utils.value_tokenizer import ValueTokenizer
+        value_tokenizer = ValueTokenizer(
+            llm_path=model_args.model_name_or_path,
+            bins=data_args.value_tokenizer_bins,
+            min_value=data_args.value_tokenizer_min,
+            max_value=data_args.value_tokenizer_max,
+        )
+        print(f'ValueTokenizer created: bins={data_args.value_tokenizer_bins}, '
+              f'range=[{data_args.value_tokenizer_min}, {data_args.value_tokenizer_max}]')
+    else:
+        value_tokenizer = None
+
+    data_module = make_supervised_data_module(processor, data_args=data_args, model_args=model_args, value_tokenizer=value_tokenizer)
+
     trainer = Trainer(
         model=model, processing_class=tokenizer, args=training_args, **data_module
     )
@@ -201,6 +225,25 @@ def train(attn_implementation="flash_attention_2"):
     
     processor.save_pretrained(training_args.output_dir)
 
+    # Run evaluation after training (only if value_tokenizer is used)
+    if value_tokenizer is not None:
+        print("Running evaluation after training...")
+        try:
+            evaluate(
+                model_args=model_args,
+                data_args=data_args,
+                model=model,
+                processor=processor,
+                value_tokenizer=value_tokenizer,
+                output_dir=training_args.output_dir
+            )
+        except Exception as e:
+            print(f"Evaluation failed: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("Skipping evaluation: value_tokenizer not enabled in training")
+
 
 if __name__ == "__main__":
-    train(attn_implementation="flash_attention_2")
+    train(attn_implementation=None)

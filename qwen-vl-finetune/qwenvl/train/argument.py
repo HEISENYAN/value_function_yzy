@@ -18,11 +18,17 @@ class DataArguments:
     base_interval: int = field(default=2)
     max_pixels: int = field(default=28 * 28 * 576)
     min_pixels: int = field(default=28 * 28 * 16)
+    image_size: Optional[int] = field(default=None)
     video_max_frames: Optional[int] = field(default=8)
     video_min_frames: Optional[int] = field(default=4)
     video_max_pixels: int = field(default=1024 * 28 * 28)
     video_min_pixels: int = field(default=256 * 28 * 28)
     video_fps: float = 2
+    # ValueTokenizer configuration
+    use_value_tokenizer: bool = field(default=False)
+    value_tokenizer_bins: int = field(default=201)
+    value_tokenizer_min: float = field(default=-1.0)
+    value_tokenizer_max: float = field(default=0.0)
 
 
 @dataclass
@@ -43,3 +49,17 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_r: int = field(default=64)
     lora_alpha: int = field(default=128)
     lora_dropout: float = field(default=0.0)
+
+    # IterableDataset configuration
+    def __post_init__(self):
+        if self.accelerator_config is None:
+            from transformers.trainer_pt_utils import AcceleratorConfig
+            self.accelerator_config = AcceleratorConfig(dispatch_batches=False)
+
+        super().__post_init__()
+
+
+@dataclass
+class EvalArguments:
+    output_dir: str = field(default="./eval_output")
+    max_episodes: Optional[int] = field(default=None)
