@@ -1074,14 +1074,14 @@ def _create_oxe_dataset(data_args, model_args, processor):
 def make_supervised_data_module(processor, data_args, model_args=None, value_tokenizer=None) -> Dict:
     """
     Make dataset and collator for supervised fine-tuning.
-    
-    This function supports both the legacy map-style Dataset (LazySupervisedDataset) 
+
+    This function supports both the legacy map-style Dataset (LazySupervisedDataset)
     and the new IterableDataset format (QwenIterableDataset).
-    
+
     Args:
         processor: Qwen processor instance
         data_args: Data arguments containing model_type and other settings
-        iterable_dataset: Optional IterableDataset (e.g., OpenXActionFlowDataset or 
+        iterable_dataset: Optional IterableDataset (e.g., OpenXActionFlowDataset or
                         RoboTwinActionFlowDataset) that yields items in Qwen-compatible format:
                         {
                             "conversations": [
@@ -1094,7 +1094,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
                         If provided, will use QwenIterableDataset wrapper.
                         If None, will use legacy LazySupervisedDataset (backward compatible).
         model_args: Optional ModelArguments containing model_name_or_path for value_tokenizer
-    
+
     Returns:
         Dictionary with train_dataset, eval_dataset (None), and data_collator
     """
@@ -1116,14 +1116,42 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
         # Legacy format: Use map-style LazySupervisedDataset (backward compatible)
         train_dataset = LazySupervisedDataset(processor, data_args=data_args, value_tokenizer=value_tokenizer)
 
+    # Create evaluation dataset if eval_dataset_use is specified
+    eval_dataset = None
+    if hasattr(data_args, 'eval_dataset_use') and data_args.eval_dataset_use:
+        # Temporarily change dataset_use to eval_dataset_use for creating eval dataset
+        original_dataset_use = data_args.dataset_use
+        data_args.dataset_use = data_args.eval_dataset_use
+
+        eval_dataset_type = detect_dataset_type(data_args.eval_dataset_use)
+
+        if eval_dataset_type == "oxe":
+            eval_iterable_dataset = _create_oxe_dataset(data_args, model_args, processor)
+        elif eval_dataset_type in ["robottwin", "openpi"]:
+            eval_iterable_dataset = _create_value_dataset_from_path(data_args, model_args, processor)
+
+        if eval_iterable_dataset is not None:
+            if not isinstance(eval_iterable_dataset, IterableDataset):
+                raise TypeError(
+                    f"eval_iterable_dataset must be an IterableDataset, got {type(eval_iterable_dataset)}. "
+                    "Please use an IterableDataset such as OpenXActionFlowDataset or RoboTwinActionFlowDataset."
+                )
+            eval_dataset = QwenIterableDataset(eval_iterable_dataset, processor, data_args, value_tokenizer=value_tokenizer)
+        else:
+            # Legacy format: Use map-style LazySupervisedDataset (backward compatible)
+            eval_dataset = LazySupervisedDataset(processor, data_args=data_args, value_tokenizer=value_tokenizer)
+
+        # Restore original dataset_use
+        data_args.dataset_use = original_dataset_use
+
     if data_args.data_flatten or data_args.data_packing:
         data_collator = FlattenedDataCollatorForSupervisedDataset(processor.tokenizer)
         return dict(
-            train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+            train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
         )
     data_collator = DataCollatorForSupervisedDataset(processor.tokenizer)
     return dict(
-        train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
+        train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
     )
 
 
