@@ -177,141 +177,41 @@ def evaluate_episode(model, processor, value_tokenizer, episode_data, device):
                 return_dict=True,
                 return_tensors="pt"
             )
-            
             # Move to device
             inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
-            
-            # Use logits-based prediction for precise value token extraction
             with torch.no_grad():
-                # Forward pass to get logits
-                outputs = model(**inputs, return_dict=True)
-                logits = outputs.logits  # shape: [batch, seq_len, vocab_size]
-                # We're assuming batch_size==1 for evaluation here
-                input_ids_flat = inputs['input_ids'][0].tolist()
+                generation_config = {
+                    "max_new_tokens": 1,  # We only need one value token
+                    "do_sample": False,   # Greedy decoding for deterministic prediction
+                    "pad_token_id": processor.tokenizer.pad_token_id,
+                    "eos_token_id": processor.tokenizer.eos_token_id,
+                }
+                generated_outputs = model.generate(
+                    **inputs,
+                    **generation_config,
+                    return_dict_in_generate=True,
+                    output_logits=True
+                )
 
+                generated_token_ids = generated_outputs.sequences[0][len(inputs['input_ids'][0]):]
+                generated_token_id = generated_token_ids[0].item() if len(generated_token_ids) > 0 else None
 
-                # FIXED: Find the actual value token position in the sequence
-                # This should match the position where training sets labels
-                value_token_positions = []
-
-                for pos, token_id in enumerate(input_ids_flat):
-                    if token_id in value_tokenizer.extra_id_token_ids:
-                        value_token_positions.append(pos)
-
-                if len(value_token_positions) == 0:
-                    raise RuntimeError("No value tokens found in input sequence")
-
-                # Use the first (and typically only) value token position
-                value_pred_pos = value_token_positions[0]
-
-                # region agent log
-                if os.path.exists('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log'):
-                    with open('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log', 'a') as f:
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "evaluation_fixed",
-                            "hypothesisId": "H3",
-                            "location": "eval_qwen.py:evaluate_episode",
-                            "message": "Value token position found - FIXED VERSION",
-                            "data": {
-                                "value_token_positions": value_token_positions,
-                                "value_pred_pos": value_pred_pos,
-                                "token_at_pred_pos": input_ids_flat[value_pred_pos],
-                                "token_text": processor.tokenizer.decode([input_ids_flat[value_pred_pos]], skip_special_tokens=False),
-                                "context_tokens": input_ids_flat[max(0, value_pred_pos-3):min(len(input_ids_flat), value_pred_pos+4)]
-                            },
-                            "timestamp": 1733456789000
-                        }) + '\n')
-                # endregion
-
-                # 4) Extract value logits from the correct position
-                value_logits_full = logits[0, value_pred_pos]  # [vocab]
-
-                # 5) Extract logits for value tokens (<extra_id_{i}>)
-                value_token_ids = value_tokenizer.extra_id_token_ids
-                value_logits = value_logits_full[value_token_ids]  # [n_bins]
-
-                # region agent log
-                if os.path.exists('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log'):
-                    with open('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log', 'a') as f:
-                        # Get top 5 logits for debugging
-                        top_logits, top_indices = torch.topk(value_logits_full, 5)
-                        top_tokens = [processor.tokenizer.decode([idx], skip_special_tokens=False) for idx in top_indices.tolist()]
-                        value_logits_stats = {
-                            "min": float(value_logits.min()),
-                            "max": float(value_logits.max()),
-                            "mean": float(value_logits.mean()),
-                            "std": float(value_logits.std())
-                        }
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "evaluation_fixed",
-                            "hypothesisId": "H3",
-                            "location": "eval_qwen.py:evaluate_episode",
-                            "message": "Logits extraction and analysis - FIXED VERSION",
-                            "data": {
-                                "value_logits_shape": list(value_logits.shape),
-                                "value_logits_stats": value_logits_stats,
-                                "top_5_overall_tokens": top_tokens,
-                                "top_5_overall_logits": top_logits.tolist(),
-                                "value_token_ids_range": [int(value_token_ids[0]), int(value_token_ids[-1])],
-                                "value_token_logits_sample": value_logits[:5].tolist()
-                            },
-                            "timestamp": 1733456789000
-                        }) + '\n')
-                # endregion
-
-                # 6) Convert to probabilities and compute expected value
-                value_probs = torch.softmax(value_logits.float(), dim=-1).cpu().numpy()  # [n_bins]
-                value_probs = np.asarray(value_probs, dtype=np.float32)  # Ensure numpy array
-                bin_centers = value_tokenizer.bin_centers  # numpy array shape [n_bins]
-                predicted_value = float((value_probs * bin_centers).sum())
-
-                # region agent log
-                if os.path.exists('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log'):
-                    with open('/home/teamcommon/ljh/Qwen3-VL/.cursor/debug.log', 'a') as f:
-                        argmax_idx = int(value_probs.argmax())
-                        f.write(json.dumps({
-                            "sessionId": "debug-session",
-                            "runId": "evaluation_fixed",
-                            "hypothesisId": "H3",
-                            "location": "eval_qwen.py:evaluate_episode",
-                            "message": "Final prediction computation - FIXED VERSION",
-                            "data": {
-                                "predicted_value": predicted_value,
-                                "argmax_bin_idx": argmax_idx,
-                                "argmax_bin_center": float(bin_centers[argmax_idx]),
-                                "argmax_probability": float(value_probs[argmax_idx]),
-                                "entropy": float(-np.sum(value_probs * np.log(value_probs + 1e-8))),
-                                "top_3_bins": [
-                                    {"idx": i, "center": float(bin_centers[i]), "prob": float(value_probs[i])}
-                                    for i in np.argsort(-value_probs)[:3]
-                                ]
-                            },
-                            "timestamp": 1733456789000
-                        }) + '\n')
-                # endregion
+                # If we got a value token, decode it to get the predicted value
+                if generated_token_id and generated_token_id in value_tokenizer.extra_id_token_ids:
+                    predicted_value = decode_value_token(value_tokenizer, generated_token_id)
+                else:
+                    raise ValueError(f"Model generated non-value token {generated_token_id} ({processor.tokenizer.decode([generated_token_id] if generated_token_id else [], skip_special_tokens=False)}), falling back to logits")
 
                 # Optional: debug output for first and last steps
                 if step_idx == 0 or step_idx == len(episode_data) - 1:
                     rank0_print(f"[DEBUG] Step {step_idx}")
-                    rank0_print(f"assistant_pos = {assistant_pos}")
-                    rank0_print(f"value_pred_pos = {value_pred_pos}")
-                    rank0_print(f"value_logits std = {value_logits.std().item():.6f}")
-                    entropy = -np.sum(value_probs * np.log(value_probs + 1e-8))
-                    rank0_print(f"value_probs entropy = {entropy:.4f}")
-                    rank0_print(f"expected_value = {predicted_value:.4f}")
-                    argmax_value = float(bin_centers[int(value_probs.argmax())])
-                    rank0_print(f"argmax_value = {argmax_value:.4f}")
-
-                    topk = np.argsort(-value_probs)[:5]
-                    rank0_print("[Top-5 bins]")
-                    for i in topk:
-                        rank0_print(f"  bin={i:3d}, center={bin_centers[i]:+.4f}, prob={value_probs[i]:.4f}")
+                    if generated_token_id and generated_token_id in value_tokenizer.extra_id_token_ids:
+                        rank0_print(f"Generated value token: {processor.tokenizer.decode([generated_token_id], skip_special_tokens=False)}")
+                        bin_idx = np.where(value_tokenizer.extra_id_token_ids == generated_token_id)[0][0]
+                        rank0_print(f"Bin index: {bin_idx}, Value: {predicted_value:.4f}")
+                    else:
+                        rank0_print(f"Used fallback prediction: {predicted_value:.4f}")
                     rank0_print("=" * 80)
-
-                generated_token_id = int(value_token_ids[int(value_probs.argmax())])  # Use actual token ID
-
             
             predicted_values.append(predicted_value)
             
@@ -458,7 +358,7 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
         local_rank=0,
         world_size=1,
         num_workers=0,  # No multiprocessing for evaluation
-        value_tokenizer=None,  # Don't encode, we want raw data
+        value_tokenizer=value_tokenizer,  # Pass the created value_tokenizer
     )
     
     # Group data by episode

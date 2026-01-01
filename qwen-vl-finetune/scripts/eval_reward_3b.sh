@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Model configuration
-model_name_or_path=./output  # Base model path
+model_name_or_path=./output/gpus_8/checkpoint-3000  # Base model path
 
 # Dataset configuration
-# datasets=qwen-vl-finetune/data/openpi/merged_beat_block_hammer.pkl
-datasets=qwen-vl-finetune/data/RoboTwin/dataset/beat_block_hammer/aloha-agilex_clean_50
+datasets=data/openpi/merged_beat_block_hammer.pkl
+# datasets=data/RoboTwin/dataset/beat_block_hammer/aloha-agilex_clean_50
 
 # ValueTokenizer configuration
 value_tokenizer_bins=201  # Number of bins (should match model's extra tokens)
@@ -13,8 +13,8 @@ value_tokenizer_min=-1.0  # Minimum value
 value_tokenizer_max=0.0  # Maximum value
 
 # Evaluation configuration
-output_dir=./eval_output
-max_episodes=1  # Number of episodes to evaluate
+output_dir=./eval_output/gpus_8/checkpoint-3000
+max_episodes=1000  # Number of episodes to evaluate
 
 # Launch evaluation
 python qwenvl/train/eval_qwen.py \
