@@ -14,21 +14,13 @@ from collections import defaultdict
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-# from trainer import replace_qwen2_vl_attention_class
+from transformers import Qwen2_5_VLForConditionalGeneration,
 
-from transformers import (
-    Qwen2VLForConditionalGeneration,
-    Qwen2_5_VLForConditionalGeneration,
-    Qwen3VLForConditionalGeneration,
-    Qwen3VLMoeForConditionalGeneration
-)
-
-from qwenvl.data.datasets import RoboTwinValueDataset, OpenPiValueDataset, OpenXValueDataset
+from qwenvl.data.datasets import LeRobotValueDataset
 from torch.utils.data import IterableDataset
 from qwenvl.train.argument import (
     ModelArguments,
     DataArguments,
-    TrainingArguments,
     EvalArguments,
 )
 from transformers import AutoProcessor
@@ -39,61 +31,49 @@ def rank0_print(*args):
 
 
 def detect_dataset_type(dataset_path):
-    """Detect which dataset type to use based on the path and contents."""
-    from qwenvl.data import detect_dataset_type as detect_from_data_module
-    return detect_from_data_module(dataset_path)
+    """Always return 'lerobot' since we now only support LeRobot datasets."""
+    return "lerobot"
 
 
 def create_evaluation_dataset(dataset_path, processor, **kwargs):
     """
-    Create appropriate dataset for evaluation based on path.
+    Create LeRobot dataset for evaluation.
 
     Args:
-        dataset_path: Path to dataset
+        dataset_path: Path to LeRobot dataset
         processor: Qwen processor
         **kwargs: Additional arguments
 
     Returns:
-        Dataset instance
+        LeRobotValueDataset instance
     """
-    from qwenvl.data import get_dataset_config, create_value_dataset
     import os
+    import torch
 
-    dataset_type = detect_dataset_type(dataset_path)
+    # Resolve dataset directory
+    if not os.path.isabs(dataset_path):
+        abs_path = os.path.abspath(dataset_path)
+        if os.path.exists(abs_path):
+            dataset_path = abs_path
 
-    if dataset_type == "oxe":
-        # Special handling for RLDS-based datasets
-        # Parse dataset_path for data_root_dir:data_mix format
-        if ":" in dataset_path:
-            data_root_dir, data_mix = dataset_path.split(":", 1)
-        else:
-            data_root_dir = "/path/to/openx/data"
-            data_mix = "bridge_rt_1"
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_path}")
 
-        dataset = OpenXValueDataset(
-            dataset_name="open_x_embodiment",
-            transform=None,
-            tokenizer=processor.tokenizer,
-            data_dir_list=[],
-            data_root_dir=Path(data_root_dir),
-            data_mix=data_mix,
-            resize_resolution=(256, 256),
-            **kwargs
-        )
-    else:
-        # Use unified factory for other datasets
-        dataset_config = get_dataset_config(dataset_path)
-        dataset_dir = dataset_path if os.path.isdir(dataset_path) else os.path.dirname(dataset_path)
+    # Get distributed training info
+    local_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
 
-        dataset = create_value_dataset(
-            dataset_config,
-            dataset_name=dataset_config["dataset_type"].lower(),
-            transform=None,
-            tokenizer=processor.tokenizer,
-            dataset_dir=dataset_dir,
-            shuffle=False,  # Keep episode order for evaluation
-            **kwargs
-        )
+    # Create LeRobot dataset
+    dataset = LeRobotValueDataset(
+        dataset_name="lerobot_eval",
+        transform=None,
+        tokenizer=processor.tokenizer,
+        dataset_dir=dataset_path,
+        shuffle=False,  # Keep episode order for evaluation
+        local_rank=local_rank,
+        world_size=world_size,
+        **kwargs
+    )
 
     return dataset
 
@@ -115,6 +95,32 @@ def load_model_and_processor(model_name_or_path, attn_implementation=None):
 
     rank0_print(f"Model loaded: {model.__class__.__name__}")
     return model, processor
+
+
+def decode_value_token_with_interpolation(value_tokenizer, generated_outputs, input_length):
+    """Decode value tokens with interpolation based on logits for continuous values."""
+    # Get the logits for the generated token (last token)
+    # logits shape: [batch_size, seq_len, vocab_size]
+    logits = generated_outputs.logits[0]  # Get first batch
+
+    if len(logits) == 0:
+        return 0.0
+
+    # Get logits for the last generated token
+    last_token_logits = logits[-1]  # Shape: [vocab_size]
+
+    # Extract logits only for value tokens
+    value_token_ids = value_tokenizer.extra_id_token_ids
+    value_logits = last_token_logits[value_token_ids]  # Shape: [n_bins]
+
+    # Apply softmax to get probabilities
+    value_probs = torch.softmax(value_logits, dim=0).cpu().numpy()
+
+    # Interpolate between bin centers using probabilities as weights
+    bin_centers = value_tokenizer.bin_centers  # Shape: [n_bins]
+    interpolated_value = np.sum(value_probs * bin_centers)
+
+    return interpolated_value
 
 
 def decode_value_token(value_tokenizer, generated_token_id):
@@ -196,9 +202,11 @@ def evaluate_episode(model, processor, value_tokenizer, episode_data, device):
                 generated_token_ids = generated_outputs.sequences[0][len(inputs['input_ids'][0]):]
                 generated_token_id = generated_token_ids[0].item() if len(generated_token_ids) > 0 else None
 
-                # If we got a value token, decode it to get the predicted value
+                # Use interpolation for continuous value prediction
                 if generated_token_id and generated_token_id in value_tokenizer.extra_id_token_ids:
-                    predicted_value = decode_value_token(value_tokenizer, generated_token_id)
+                    predicted_value = decode_value_token_with_interpolation(
+                        value_tokenizer, generated_outputs, len(inputs['input_ids'][0])
+                    )
                 else:
                     raise ValueError(f"Model generated non-value token {generated_token_id} ({processor.tokenizer.decode([generated_token_id] if generated_token_id else [], skip_special_tokens=False)}), falling back to logits")
 
@@ -348,9 +356,8 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
 
     rank0_print(f"Loading dataset from: {dataset_dir}")
 
-    # Load the appropriate dataset based on type
-    dataset_type = detect_dataset_type(dataset_dir)
-    rank0_print(f"Loading {dataset_type} dataset for evaluation")
+    # Load LeRobot dataset for evaluation
+    rank0_print(f"Loading LeRobot dataset for evaluation")
 
     dataset = create_evaluation_dataset(
         dataset_dir,
@@ -365,90 +372,34 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
     # Different handling for different dataset types
     rank0_print("Loading and grouping data by episode...")
 
-    if dataset_type == "oxe":
-        # OpenX dataset is an IterableDataset, we need to iterate through it
-        episode_data = defaultdict(list)
-        episode_counter = defaultdict(int)
+    episode_data = defaultdict(list)
 
-        # For OpenX dataset, we iterate through the dataset and collect samples
-        # Note: This assumes the dataset yields samples in some order, we need to group by episode
-        for sample_idx, sample in enumerate(tqdm(dataset, desc="Loading OpenX dataset")):
+    # LeRobot datasets have indices, use them for structured loading
+    if hasattr(dataset, 'indices') and dataset.indices:
+        # Sort indices by episode_idx, then by step to maintain order
+        sorted_indices = sorted(dataset.indices, key=lambda x: (x[0], x[1]))
+
+        for episode_idx, step in tqdm(sorted_indices, desc="Loading dataset"):
+            # Load the data for this episode and step
             try:
-                # Extract episode information from sample
-                # REQUIRE: episode_id must be present in OpenX samples
-                episode_id = sample.get('episode_id')
-                if episode_id is None:
-                    raise ValueError(f"OpenX sample missing required 'episode_id' field at index {sample_idx}")
+                lerobot_sample = dataset._load_frame(episode_idx, step)
+                data = dataset.batch_transform(lerobot_sample)
 
                 qwen_data = {
-                    "conversations": sample['conversations'],
+                    "conversations": data['conversations'],
                     "data_path": "",
-                    "image": sample['image'],
-                    "value": sample.get('value', None),
+                    "image": data['image'],
+                    "value": data.get('value', None),  # Include true value if available
                 }
 
-                episode_data[episode_id].append(qwen_data)
-                episode_counter[episode_id] += 1
+                episode_data[episode_idx].append(qwen_data)
             except Exception as e:
-                rank0_print(f"Error loading sample {sample_idx}: {e}")
+                rank0_print(f"Error loading episode {episode_idx}, step {step}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
     else:
-        # For IterableDataset (RoboTwin, OpenPi) - use the dataset's indices directly
-        episode_data = defaultdict(list)
-
-        # Check if dataset has indices (for RoboTwin and OpenPi style datasets)
-        if hasattr(dataset, 'indices') and dataset.indices:
-            # Sort indices by episode_idx, then by step to maintain order
-            sorted_indices = sorted(dataset.indices, key=lambda x: (x[0], x[1]))
-
-            for episode_idx, step in tqdm(sorted_indices, desc="Loading dataset"):
-                # Load the data for this episode and step
-                try:
-                    hdf5_sample = dataset._load_frame(episode_idx, step)
-                    data = dataset.batch_transform(hdf5_sample)
-
-                    qwen_data = {
-                        "conversations": data['conversations'],
-                        "data_path": "",
-                        "image": data['image'],
-                        "value": data.get('value', None),  # Include true value if available
-                    }
-
-                    episode_data[episode_idx].append(qwen_data)
-                except Exception as e:
-                    rank0_print(f"Error loading episode {episode_idx}, step {step}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
-        else:
-            raise ValueError("Dataset must provide indices for evaluation. "
-                           "Please ensure you're using a dataset that supports indexing (e.g., RoboTwinValueDataset or OpenPiValueDataset)")
-
-        try:
-            for sample in tqdm(dataset, desc="Loading dataset"):
-                try:
-                    # For IterableDataset samples, extract episode information
-                    # This assumes samples have episode metadata
-                    episode_id = sample.get('episode_id', sample.get('_episode_idx', sample_idx // 100))
-
-                    qwen_data = {
-                        "conversations": sample['conversations'],
-                        "data_path": "",
-                        "image": sample['image'],
-                        "value": sample.get('value', None),
-                    }
-
-                    episode_data[episode_id].append(qwen_data)
-                    episode_counter[episode_id] += 1
-                    sample_idx += 1
-                except Exception as e:
-                    rank0_print(f"Error processing sample {sample_idx}: {e}")
-                    sample_idx += 1
-                    continue
-        except Exception as e:
-            rank0_print(f"Error iterating dataset: {e}")
-            import traceback
-            traceback.print_exc()
+        raise ValueError("LeRobot dataset must provide indices for evaluation.")
     
     # Sort episodes by episode index
     episode_data = dict(sorted(episode_data.items()))

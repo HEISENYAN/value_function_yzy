@@ -7,9 +7,5 @@ accelerate==1.7.0
 torchcodec==0.2
 peft==0.17.1
 qwen-vl-utils==0.0.14
-h5py
-opencv-python
-tensorflow_graphics == 2021.12.3
-dlimp @ git+https://github.com/kvablack/dlimp@5edaa4691567873d495633f2708982b42edf1972
 wandb
 tensorboard

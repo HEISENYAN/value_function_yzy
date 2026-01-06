@@ -17,9 +17,7 @@ from torch.utils.data import Dataset, IterableDataset
 
 import transformers
 
-from . import data_list, detect_dataset_type, create_value_dataset
 from .rope2d import get_rope_index_25, get_rope_index_2, get_rope_index_3
-from .datasets import OpenXValueDataset, RoboTwinValueDataset, OpenPiValueDataset
 
 IGNORE_INDEX = -100
 IMAGE_TOKEN_INDEX = 151655
@@ -28,6 +26,16 @@ DEFAULT_IMAGE_TOKEN = "<image>"
 DEFAULT_VIDEO_TOKEN = "<video>"
 
 local_rank = None
+
+
+def data_list(dataset_names):
+    """Simple dataset list function for backward compatibility."""
+    # Since we now only support LeRobot datasets, just return the names as-is
+    if isinstance(dataset_names, list):
+        return [{"dataset_type": "LeRobot", "data_path": name, "sampling_rate": 1.0} for name in dataset_names]
+    else:
+        # Handle single dataset name
+        return [{"dataset_type": "LeRobot", "data_path": dataset_names, "sampling_rate": 1.0}]
 
 
 def rank0_print(*args):
@@ -713,10 +721,10 @@ class FlattenedDataCollatorForSupervisedDataset(DataCollatorForSupervisedDataset
 class QwenIterableDataset(torch.utils.data.IterableDataset):
     """
     IterableDataset wrapper that applies Qwen preprocessing to items from IterableDataset.
-    
-    This class wraps an IterableDataset (e.g., OpenXValueDataset or RoboTwinValueDataset)
+
+    This class wraps an IterableDataset (e.g., LeRobotValueDataset)
     and applies Qwen's preprocessing pipeline (preprocess_qwen_visual) to each item.
-    
+
     The wrapped IterableDataset should yield items in Qwen-compatible format:
     {
         "conversations": [...],
@@ -926,37 +934,30 @@ class QwenIterableDataset(torch.utils.data.IterableDataset):
             return new_data_dict
 
 
-def _create_value_dataset_from_path(data_args, model_args, processor):
+def make_supervised_data_module(processor, data_args, model_args=None, value_tokenizer=None) -> Dict:
     """
-    Create a value dataset from dataset path using unified factory.
+    Make dataset and collator for supervised fine-tuning with LeRobot datasets.
 
     Args:
-        data_args: Data arguments
-        model_args: Model arguments (for value_tokenizer)
-        processor: Qwen processor
+        processor: Qwen processor instance
+        data_args: Data arguments containing model_type and other settings
+        model_args: Optional ModelArguments containing model_name_or_path for value_tokenizer
+        value_tokenizer: Optional ValueTokenizer instance
 
     Returns:
-        IterableDataset instance or None if not applicable
+        Dictionary with train_dataset, eval_dataset (None), and data_collator
     """
     import torch
     from qwenvl.utils.value_tokenizer import ValueTokenizer
-    from . import get_dataset_config
+    from .datasets import LeRobotValueDataset
 
     # Get distributed training info
     global local_rank
     local_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
     world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
 
-    # Get dataset configuration
-    dataset_config = get_dataset_config(data_args.dataset_use)
-
-    # Skip RLDS-based datasets (handled separately)
-    if dataset_config.get("requires_rlds", False):
-        return None
-
     # Create value_tokenizer if enabled
-    value_tokenizer = None
-    if data_args.use_value_tokenizer:
+    if data_args.use_value_tokenizer and value_tokenizer is None:
         if model_args is None:
             raise ValueError("model_args is required when use_value_tokenizer=True")
         value_tokenizer = ValueTokenizer(
@@ -982,15 +983,14 @@ def _create_value_dataset_from_path(data_args, model_args, processor):
     if not os.path.exists(dataset_dir):
         raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
 
-    rank0_print(f"Creating {dataset_config['dataset_type']} dataset from: {dataset_dir}")
+    rank0_print(f"Creating LeRobot dataset from: {dataset_dir}")
 
     # Get num_workers from training_args if available, otherwise use default
     num_workers = getattr(data_args, 'dataloader_num_workers', 4)
 
-    # Create dataset using factory function
-    iterable_dataset = create_value_dataset(
-        dataset_config,
-        dataset_name=dataset_config["dataset_type"].lower(),
+    # Create LeRobot dataset
+    iterable_dataset = LeRobotValueDataset(
+        dataset_name="lerobot",
         transform=None,  # Not used for value datasets
         tokenizer=processor.tokenizer,
         dataset_dir=dataset_dir,
@@ -1000,160 +1000,48 @@ def _create_value_dataset_from_path(data_args, model_args, processor):
         value_tokenizer=value_tokenizer,
     )
 
-    return iterable_dataset
-
-
-def _create_oxe_dataset(data_args, model_args, processor):
-    """
-    Create OpenX Embodiment dataset (special handling due to RLDS dependency).
-
-    Args:
-        data_args: Data arguments
-        model_args: Model arguments
-        processor: Qwen processor
-
-    Returns:
-        OpenXValueDataset instance or None
-    """
-    import torch
-    from qwenvl.utils.value_tokenizer import ValueTokenizer
-
-    # Get distributed training info
-    global local_rank
-    local_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
-
-    # Create value_tokenizer if enabled
-    value_tokenizer = None
-    if data_args.use_value_tokenizer:
-        if model_args is None:
-            raise ValueError("model_args is required when use_value_tokenizer=True")
-        value_tokenizer = ValueTokenizer(
-            llm_path=model_args.model_name_or_path,
-            bins=data_args.value_tokenizer_bins,
-            min_value=data_args.value_tokenizer_min,
-            max_value=data_args.value_tokenizer_max,
-        )
-        rank0_print(f"Created ValueTokenizer with bins={data_args.value_tokenizer_bins}, "
-                   f"range=[{data_args.value_tokenizer_min}, {data_args.value_tokenizer_max}]")
-
-    # For OpenX, we need to parse the dataset_use to extract data_mix and data_root_dir
-    # This is a simplified version - in practice, you might need more sophisticated parsing
-    dataset_use = data_args.dataset_use
-    if ":" in dataset_use:
-        # Format: "data_root_dir:data_mix"
-        data_root_dir, data_mix = dataset_use.split(":", 1)
-    else:
-        # Default values
-        data_root_dir = "/path/to/openx/data"
-        data_mix = "bridge_rt_1"
-
-    rank0_print(f"Creating OpenXValueDataset with data_mix={data_mix}")
-
-    iterable_dataset = OpenXValueDataset(
-        dataset_name="open_x_embodiment",
-        transform=None,
-        tokenizer=processor.tokenizer,
-        data_dir_list=[],  # Will be filled by RLDS
-        data_root_dir=Path(data_root_dir),
-        data_mix=data_mix,
-        resize_resolution=(256, 256),
-        local_rank=local_rank,
-        world_size=world_size,
-        num_workers=getattr(data_args, 'dataloader_num_workers', 8),
-        data_status=None,
-        shuffle_buffer_size=256_000,
-        train=True,
-        image_aug=False,
-        value_tokenizer=value_tokenizer,
-    )
-
-    return iterable_dataset
-
-
-def make_supervised_data_module(processor, data_args, model_args=None, value_tokenizer=None) -> Dict:
-    """
-    Make dataset and collator for supervised fine-tuning.
-
-    This function supports both the legacy map-style Dataset (LazySupervisedDataset)
-    and the new IterableDataset format (QwenIterableDataset).
-
-    Args:
-        processor: Qwen processor instance
-        data_args: Data arguments containing model_type and other settings
-        iterable_dataset: Optional IterableDataset (e.g., OpenXActionFlowDataset or
-                        RoboTwinActionFlowDataset) that yields items in Qwen-compatible format:
-                        {
-                            "conversations": [
-                                {"from": "human", "value": You are estimating task progress for robotic manipulation.<image>},
-                                {"from": "gpt", "value": "[action as text]"}
-                            ],
-                            "image": [PIL.Image, ...] or ["path1", "path2", ...],
-                            "data_path": "..."  # Optional, only needed if using file paths
-                        }
-                        If provided, will use QwenIterableDataset wrapper.
-                        If None, will use legacy LazySupervisedDataset (backward compatible).
-        model_args: Optional ModelArguments containing model_name_or_path for value_tokenizer
-
-    Returns:
-        Dictionary with train_dataset, eval_dataset (None), and data_collator
-    """
-    dataset_type = detect_dataset_type(data_args.dataset_use)
-
-    if dataset_type == "oxe":
-        iterable_dataset = _create_oxe_dataset(data_args, model_args, processor)
-    elif dataset_type in ["robottwin", "openpi"]:
-        iterable_dataset = _create_value_dataset_from_path(data_args, model_args, processor)
-
-    if iterable_dataset is not None:
-        if not isinstance(iterable_dataset, IterableDataset):
-            raise TypeError(
-                f"iterable_dataset must be an IterableDataset, got {type(iterable_dataset)}. "
-                "Please use an IterableDataset such as OpenXActionFlowDataset or RoboTwinActionFlowDataset."
-            )
-        train_dataset = QwenIterableDataset(iterable_dataset, processor, data_args, value_tokenizer=value_tokenizer)
-    else:
-        # Legacy format: Use map-style LazySupervisedDataset (backward compatible)
-        train_dataset = LazySupervisedDataset(processor, data_args=data_args, value_tokenizer=value_tokenizer)
+    # Wrap with QwenIterableDataset for preprocessing
+    train_dataset = QwenIterableDataset(iterable_dataset, processor, data_args, value_tokenizer=value_tokenizer)
 
     # Create evaluation dataset if eval_dataset_use is specified
     eval_dataset = None
     if hasattr(data_args, 'eval_dataset_use') and data_args.eval_dataset_use:
-        # Temporarily change dataset_use to eval_dataset_use for creating eval dataset
-        original_dataset_use = data_args.dataset_use
-        data_args.dataset_use = data_args.eval_dataset_use
+        eval_dataset_dir = data_args.eval_dataset_use
+        if not os.path.isabs(eval_dataset_dir):
+            abs_path = os.path.abspath(eval_dataset_dir)
+            if os.path.exists(abs_path):
+                eval_dataset_dir = abs_path
+            else:
+                # Fallback: assume relative to project root (qwen-vl-finetune)
+                project_root = Path(__file__).parent.parent.parent.parent
+                eval_dataset_dir = str(project_root / eval_dataset_dir)
 
-        eval_dataset_type = detect_dataset_type(data_args.eval_dataset_use)
+        if os.path.exists(eval_dataset_dir):
+            rank0_print(f"Creating evaluation LeRobot dataset from: {eval_dataset_dir}")
 
-        if eval_dataset_type == "oxe":
-            eval_iterable_dataset = _create_oxe_dataset(data_args, model_args, processor)
-        elif eval_dataset_type in ["robottwin", "openpi"]:
-            eval_iterable_dataset = _create_value_dataset_from_path(data_args, model_args, processor)
+            eval_iterable_dataset = LeRobotValueDataset(
+                dataset_name="lerobot_eval",
+                transform=None,
+                tokenizer=processor.tokenizer,
+                dataset_dir=eval_dataset_dir,
+                local_rank=local_rank,
+                world_size=world_size,
+                num_workers=num_workers,
+                value_tokenizer=value_tokenizer,
+            )
 
-        if eval_iterable_dataset is not None:
-            if not isinstance(eval_iterable_dataset, IterableDataset):
-                raise TypeError(
-                    f"eval_iterable_dataset must be an IterableDataset, got {type(eval_iterable_dataset)}. "
-                    "Please use an IterableDataset such as OpenXActionFlowDataset or RoboTwinActionFlowDataset."
-                )
             eval_dataset = QwenIterableDataset(eval_iterable_dataset, processor, data_args, value_tokenizer=value_tokenizer)
         else:
-            # Legacy format: Use map-style LazySupervisedDataset (backward compatible)
-            eval_dataset = LazySupervisedDataset(processor, data_args=data_args, value_tokenizer=value_tokenizer)
+            rank0_print(f"Warning: Evaluation dataset directory not found: {eval_dataset_dir}")
 
-        # Restore original dataset_use
-        data_args.dataset_use = original_dataset_use
-
+    # Choose data collator
     if data_args.data_flatten or data_args.data_packing:
         data_collator = FlattenedDataCollatorForSupervisedDataset(processor.tokenizer)
-        return dict(
-            train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
-        )
-    data_collator = DataCollatorForSupervisedDataset(processor.tokenizer)
+    else:
+        data_collator = DataCollatorForSupervisedDataset(processor.tokenizer)
+
     return dict(
-        train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        data_collator=data_collator
     )
-
-
-if __name__ == "__main__":
-    pass
