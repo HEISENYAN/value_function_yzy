@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
@@ -244,27 +245,178 @@ def plot_episode_values(episode_idx, episode_results, output_dir):
     """Plot value changes for a single episode."""
     steps = episode_results['steps']
     predicted_values = episode_results['predicted_values']
-    true_values = episode_results['true_values']
-    
+
     plt.figure(figsize=(12, 6))
     plt.plot(steps, predicted_values, 'b-', label='Predicted Value', linewidth=2, marker='o', markersize=4)
-    
-    if true_values:
-        plt.plot(steps, true_values, 'r--', label='True Value', linewidth=2, marker='s', markersize=4)
-    
+
     plt.xlabel('Step', fontsize=12)
     plt.ylabel('Value', fontsize=12)
     plt.title(f'Episode {episode_idx} - Value Prediction', fontsize=14, fontweight='bold')
     plt.legend(fontsize=11)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    
+
     # Save figure
     output_path = Path(output_dir) / f"episode_{episode_idx}_values.png"
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
-    
+
     rank0_print(f"Saved plot for episode {episode_idx} to {output_path}")
+
+
+def create_episode_animation(episode_idx, episode_data, episode_results, output_dir, filename=None):
+    """Create animation for a single episode showing observation and predicted value changes."""
+    if filename is None:
+        filename = f"episode_{episode_idx}_animation.gif"
+
+    output_path = Path(output_dir) / filename
+    rank0_print(f"Creating animation for episode {episode_idx}...")
+
+    steps = episode_results['steps']
+    predicted_values = episode_results['predicted_values']
+    max_steps = len(steps)
+
+    # Create figure with dual subplot layout
+    fig = plt.figure(figsize=(16, 8))
+
+    # Left subplot: observation image
+    ax1 = fig.add_subplot(121)
+    ax1.set_title(f'Episode {episode_idx} - Robot Observation', fontsize=14, fontweight='bold')
+    ax1.axis('off')  # Hide axes for image display
+
+    # Right subplot: predicted value curve
+    ax2 = fig.add_subplot(122)
+    ax2.set_title('Predicted Value Changes', fontsize=14, fontweight='bold')
+    ax2.set_xlabel('Step', fontsize=12)
+    ax2.set_ylabel('Predicted Value', fontsize=12)
+    ax2.grid(True, alpha=0.3)
+
+    # Initialize image display
+    img_display = None
+    current_image = None
+
+    # Initialize prediction curve
+    line, = ax2.plot([], [], 'b-', linewidth=3, marker='o', markersize=6, label='Predicted Value')
+    ax2.legend(fontsize=11)
+
+    def update(frame):
+        nonlocal img_display, current_image
+
+        step_idx = frame
+        if step_idx >= max_steps:
+            return []
+
+        # Update left subplot: observation image
+        if step_idx < len(episode_data):
+            step_data = episode_data[step_idx]
+            if 'image' in step_data and len(step_data['image']) > 0:
+                # Get the first image (usually the primary camera view)
+                image = step_data['image'][0]
+
+                # Convert PIL Image to numpy array if needed
+                if hasattr(image, 'convert'):
+                    # PIL Image
+                    current_image = np.array(image.convert('RGB'))
+                else:
+                    # Assume it's already a numpy array
+                    current_image = np.array(image)
+
+                # Display image
+                if img_display is None:
+                    img_display = ax1.imshow(current_image)
+                else:
+                    img_display.set_data(current_image)
+
+                ax1.set_title(f'Episode {episode_idx} - Robot Observation (Step {step_idx})',
+                            fontsize=14, fontweight='bold')
+
+        # Update right subplot: prediction curve
+        # Show all predictions up to current step
+        current_steps = steps[:step_idx+1]
+        current_predictions = predicted_values[:step_idx+1]
+
+        line.set_data(current_steps, current_predictions)
+
+        # Update plot limits dynamically
+        if current_predictions:
+            y_min = min(current_predictions) * 0.95
+            y_max = max(current_predictions) * 1.05
+            ax2.set_xlim(0, max(current_steps) + 1)
+            ax2.set_ylim(y_min, y_max)
+
+            # Add current value annotation
+            current_value = current_predictions[-1]
+            ax2.text(0.02, 0.98, f'Current: {current_value:.4f}',
+                    transform=ax2.transAxes, fontsize=12,
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+        return [line, img_display] if img_display else [line]
+
+    # Create animation
+    try:
+        ani = animation.FuncAnimation(fig, update, frames=max_steps, interval=500, blit=False)
+
+        # Save animation
+        rank0_print(f"Saving animation to {output_path}...")
+        ani.save(str(output_path), writer='pillow', fps=2, dpi=100)
+        rank0_print(f"Animation saved as {output_path}")
+
+        # Save the final frame as a static image
+        rank0_print("Saving final frame as static image...")
+        fig_final = plt.figure(figsize=(16, 8))
+
+        # Left subplot: final observation
+        ax1_final = fig_final.add_subplot(121)
+        ax1_final.set_title(f'Episode {episode_idx} - Robot Observation (Final)', fontsize=14, fontweight='bold')
+        ax1_final.axis('off')
+
+        if max_steps > 0 and max_steps <= len(episode_data):
+            final_step_data = episode_data[max_steps - 1]
+            if 'image' in final_step_data and len(final_step_data['image']) > 0:
+                final_image = final_step_data['image'][0]
+                if hasattr(final_image, 'convert'):
+                    final_image = np.array(final_image.convert('RGB'))
+                else:
+                    final_image = np.array(final_image)
+                ax1_final.imshow(final_image)
+
+        # Right subplot: complete prediction curve
+        ax2_final = fig_final.add_subplot(122)
+        ax2_final.set_title('Predicted Value Changes (Complete)', fontsize=14, fontweight='bold')
+        ax2_final.set_xlabel('Step', fontsize=12)
+        ax2_final.set_ylabel('Predicted Value', fontsize=12)
+        ax2_final.grid(True, alpha=0.3)
+
+        # Plot complete curve
+        ax2_final.plot(steps, predicted_values, 'b-', linewidth=3, marker='o', markersize=6, label='Predicted Value')
+        ax2_final.legend(fontsize=11)
+
+        if predicted_values:
+            ax2_final.set_xlim(0, max(steps) + 1)
+            y_min = min(predicted_values) * 0.95
+            y_max = max(predicted_values) * 1.05
+            ax2_final.set_ylim(y_min, y_max)
+
+            # Add final value annotation
+            final_value = predicted_values[-1]
+            ax2_final.text(0.02, 0.98, f'Final: {final_value:.4f}',
+                          transform=ax2_final.transAxes, fontsize=12,
+                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+
+        # Save final frame as PNG
+        final_image_path = output_path.with_suffix('.png')
+        plt.tight_layout()
+        fig_final.savefig(final_image_path, dpi=150, bbox_inches='tight')
+        rank0_print(f"Final frame saved as {final_image_path}")
+
+        plt.close(fig)
+        plt.close(fig_final)
+        return True
+
+    except Exception as e:
+        rank0_print(f"Animation creation failed for episode {episode_idx}: {e}")
+        plt.close(fig)
+        return False
 
 
 def evaluate(model_args=None, data_args=None, eval_args=None, model=None, processor=None, value_tokenizer=None, output_dir=None):
@@ -428,6 +580,9 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
             
             # Plot episode values
             plot_episode_values(episode_idx, episode_results, eval_output_dir)
+
+            # Create animation for episode
+            create_episode_animation(episode_idx, episode_items, episode_results, eval_output_dir)
             
         except Exception as e:
             rank0_print(f"Error evaluating episode {episode_idx}: {e}")
