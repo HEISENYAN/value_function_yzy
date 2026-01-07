@@ -2,12 +2,10 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, Auto
 import torch
 import os
 
-print(f"Loading model and processor: {pretrain_model_path}")
-
 pretrain_model_path = "Qwen/Qwen2.5-VL-3B-Instruct" 
 output_model_path = "./checkpoints/Qwen2.5-VL-3B-Instruct-resize"
 
-os.makedirs(output_model_path, exist_ok=True)
+print(f"Loading model and processor: {pretrain_model_path}")
 
 config = AutoConfig.from_pretrained(pretrain_model_path)
 tokenizer = AutoTokenizer.from_pretrained(pretrain_model_path)
@@ -42,6 +40,8 @@ with torch.no_grad():
         input_embeddings.weight[token_id] = (torch.randn_like(emb_mean) * emb_std * 0.1 + emb_mean).to(device=device, dtype=dtype)
 
 print(f"Saving model: {output_model_path}")
+
+os.makedirs(output_model_path, exist_ok=True)
 
 processor.tokenizer = tokenizer
 config.save_pretrained(output_model_path)

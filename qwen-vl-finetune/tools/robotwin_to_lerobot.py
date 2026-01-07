@@ -3,6 +3,9 @@ Script to convert RoboTwin hdf5 data directly to LeRobot dataset v2.1 format wit
 Combines data processing and format conversion into a single streamlined pipeline.
 """
 
+import os
+os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+
 import dataclasses
 from pathlib import Path
 import shutil
@@ -16,11 +19,9 @@ import torch
 import tqdm
 import tyro
 import json
-import os
 import fnmatch
 import cv2
 import argparse
-
 
 @dataclasses.dataclass(frozen=True)
 class DatasetConfig:
@@ -104,7 +105,7 @@ def create_empty_dataset(
     for cam in cameras:
         features[f"observation.images.{cam}"] = {
             "dtype": mode,
-            "shape": (3, 480, 640),
+            "shape": (3, 224, 224),
             "names": [
                 "channels",
                 "height",
@@ -130,6 +131,7 @@ def create_empty_dataset(
 
 def load_raw_aloha_episode_data(
     ep_path: Path,
+    mode: str = "image",
 ) -> tuple[
     dict[str, np.ndarray],
     torch.Tensor,
@@ -186,7 +188,8 @@ def load_raw_aloha_episode_data(
             for orig_cam, lerobot_cam in camera_mappings.items():
                 camera_bits = image_dict[orig_cam][j]
                 camera_img = cv2.imdecode(np.frombuffer(camera_bits, np.uint8), cv2.IMREAD_COLOR)
-                camera_resized = cv2.resize(camera_img, (640, 480))
+                # Resize to 224x224 for storage and future use
+                camera_resized = cv2.resize(camera_img, (224, 224))
 
                 if lerobot_cam == "cam_high":
                     cam_high.append(camera_resized)
@@ -200,11 +203,12 @@ def load_raw_aloha_episode_data(
             action = state
             actions.append(action)
 
-    # Convert to torch tensors and organize images
+    # Convert to torch tensors
     state_tensor = torch.from_numpy(np.array(qpos))
     action_tensor = torch.from_numpy(np.array(actions))
 
-    # Organize images by camera
+    # Organize images by camera - always use decoded image arrays
+    # LeRobot will handle compression/encoding internally based on mode and use_videos settings
     imgs_per_cam = {
         "cam_high": np.array(cam_high),
         "cam_right_wrist": np.array(cam_right_wrist),
@@ -221,8 +225,8 @@ def load_raw_aloha_episode_data(
 def populate_dataset_from_aloha(
     dataset: LeRobotDataset,
     raw_dir: Path,
-    task: str,
     episodes: list[int] | None = None,
+    mode: str = "image",
 ) -> LeRobotDataset:
     """Populate LeRobot dataset directly from raw Aloha data."""
 
@@ -240,7 +244,7 @@ def populate_dataset_from_aloha(
         ep_path = hdf5_files[ep_idx]
 
         # Load processed episode data directly
-        imgs_per_cam, state, action, velocity, effort = load_raw_aloha_episode_data(ep_path)
+        imgs_per_cam, state, action, velocity, effort = load_raw_aloha_episode_data(ep_path, mode)
         num_frames = state.shape[0]
 
         # Load instructions for this episode
@@ -254,7 +258,7 @@ def populate_dataset_from_aloha(
                     instruction_dict = json.load(f_instr)
                     instructions = instruction_dict.get("seen", ["default_task"])
             except (json.JSONDecodeError, KeyError):
-                pass
+                raise ValueError(f"Failed to load instructions from {json_path}")
 
         # Add frames to dataset
         for i in range(num_frames):
@@ -262,7 +266,8 @@ def populate_dataset_from_aloha(
 
             # Add images for each camera
             for camera, img_array in imgs_per_cam.items():
-                # Convert BGR to RGB and transpose for LeRobot format (C, H, W)
+                # Always convert BGR to RGB and transpose for LeRobot format (C, H, W)
+                # LeRobot will handle video encoding internally if use_videos=True
                 img_rgb = cv2.cvtColor(img_array[i], cv2.COLOR_BGR2RGB)
                 img_transposed = np.transpose(img_rgb, (2, 0, 1))
                 frame[f"observation.images.{camera}"] = img_transposed
@@ -285,9 +290,8 @@ def port_aloha_direct(
     raw_dir: Path,
     repo_id: str,
     raw_repo_id: str | None = None,
-    task: str = "DEBUG",
-    *,
     episodes: list[int] | None = None,
+    push_to_hub: bool = False,
     mode: Literal["video", "image"] = "image",
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ):
@@ -328,9 +332,12 @@ def port_aloha_direct(
     dataset = populate_dataset_from_aloha(
         dataset,
         raw_dir,
-        task=task,
         episodes=episodes,
+        mode=mode,
     )
+
+    if push_to_hub:
+        dataset.push_to_hub()
 
 
 def main():
@@ -349,16 +356,15 @@ def main():
         help="LeRobot dataset repository ID"
     )
     parser.add_argument(
-        "--task",
-        type=str,
-        default="DEBUG",
-        help="Task name"
-    )
-    parser.add_argument(
         "--episodes",
         type=int,
         nargs='*',
         help="Specific episode indices to process (optional)"
+    )
+    parser.add_argument(
+        "--push_to_hub",
+        action="store_true",
+        help="Whether to push the dataset to Hugging Face Hub"
     )
     parser.add_argument(
         "--mode",
@@ -375,8 +381,8 @@ def main():
     port_aloha_direct(
         raw_dir=Path(args.raw_dir),
         repo_id=args.repo_id,
-        task=args.task,
         episodes=episodes,
+        push_to_hub=args.push_to_hub,
         mode=args.mode,
     )
 
