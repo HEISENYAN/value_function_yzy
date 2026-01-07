@@ -20,8 +20,12 @@ grad_accum_steps=4
 entry_file=qwenvl/train/train_qwen.py
 
 # Dataset configuration
-datasets=qwen-vl-finetune/data/RoboTwin/dataset/beat_block_hammer/aloha-agilex_randomized_500
-eval_datasets=qwen-vl-finetune/data/RoboTwin/dataset/beat_block_hammer/aloha-agilex_clean_50
+# 支持多个数据集，用逗号分隔
+# datasets=/home/teamcommon/.cache/huggingface/lerobot/beat_block_hammer
+# 或者使用多个数据集进行联合训练：
+# datasets="/path/to/dataset1,/path/to/dataset2,/path/to/dataset3"
+datasets=/home/teamcommon/.cache/huggingface/lerobot/beat_block_hammer_clean_50_video
+eval_datasets=/home/teamcommon/.cache/huggingface/lerobot/beat_block_hammer_clean_50_video
 
 # ValueTokenizer configuration (for continuous values like action values)
 use_value_tokenizer=True  # Enable ValueTokenizer
@@ -39,6 +43,7 @@ args="
     --model_name_or_path "${llm}" \
     --dataset_use ${datasets} \
     --eval_dataset_use ${eval_datasets} \
+    --val_ratio 0.1 \
     --tune_mm_vision False \
     --tune_mm_mlp True \
     --tune_mm_llm True \

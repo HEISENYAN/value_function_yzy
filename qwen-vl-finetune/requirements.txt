@@ -4,8 +4,12 @@ torchvision==0.21.0
 deepspeed==0.17.1
 triton==3.2.0
 accelerate==1.7.0
-torchcodec==0.2
+torchcodec>=0.2
 peft==0.17.1
 qwen-vl-utils==0.0.14
-wandb
+h5py
+opencv-python
+matplotlib
 tensorboard
+lerobot @ git+https://github.com/huggingface/lerobot.git@2b71789e15c35418b1ccecbceb81f4a598bfd883
+tyro

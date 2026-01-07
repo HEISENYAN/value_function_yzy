@@ -15,10 +15,9 @@ from collections import defaultdict
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from transformers import Qwen2_5_VLForConditionalGeneration,
+from transformers import Qwen2_5_VLForConditionalGeneration
 
-from qwenvl.data.datasets import LeRobotValueDataset
-from torch.utils.data import IterableDataset
+from qwenvl.data.data_loader import LeRobotValueDataset
 from qwenvl.train.argument import (
     ModelArguments,
     DataArguments,
