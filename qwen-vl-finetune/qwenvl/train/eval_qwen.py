@@ -8,9 +8,13 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from matplotlib.gridspec import GridSpec
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
+import imageio
+import io
+from PIL import Image
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
@@ -30,11 +34,6 @@ def rank0_print(*args):
     print(*args)
 
 
-def detect_dataset_type(dataset_path):
-    """Always return 'lerobot' since we now only support LeRobot datasets."""
-    return "lerobot"
-
-
 def create_evaluation_dataset(dataset_path, processor, **kwargs):
     """
     Create LeRobot dataset for evaluation.
@@ -42,13 +41,12 @@ def create_evaluation_dataset(dataset_path, processor, **kwargs):
     Args:
         dataset_path: Path to LeRobot dataset
         processor: Qwen processor
-        **kwargs: Additional arguments
+        **kwargs: Additional arguments (camera_names, value_tokenizer, etc.)
 
     Returns:
         LeRobotValueDataset instance
     """
     import os
-    import torch
 
     # Resolve dataset directory
     if not os.path.isabs(dataset_path):
@@ -59,20 +57,17 @@ def create_evaluation_dataset(dataset_path, processor, **kwargs):
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset directory not found: {dataset_path}")
 
-    # Get distributed training info
-    local_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
-
-    # Create LeRobot dataset
+    # Create LeRobot dataset with correct parameters (aligned with data_loader.py)
     dataset = LeRobotValueDataset(
-        dataset_name="lerobot_eval",
+        dataset_dir=dataset_path,
         transform=None,
         tokenizer=processor.tokenizer,
-        dataset_dir=dataset_path,
-        shuffle=False,  # Keep episode order for evaluation
-        local_rank=local_rank,
-        world_size=world_size,
-        **kwargs
+        split="val",  # Use val split for evaluation
+        val_ratio=1.0,  # Use all data (no train/val split for eval)
+        seed=42,  # Fixed seed for reproducibility
+        buffer_size=5000,  # Larger buffer for evaluation
+        camera_names=kwargs.get("camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
+        value_tokenizer=kwargs.get("value_tokenizer", None),
     )
 
     return dataset
@@ -165,13 +160,20 @@ def evaluate_episode(model, processor, value_tokenizer, episode_data, device):
             # "You are estimating task progress for robotic manipulation.\n\nGiven a task instruction and a single image, estimate the current progress toward completing the task.\n\nObservation: <image>\n\nInstruction: {lang_instruction}"
 
             # Build message content with proper image handling
+            # Handle multiple images (cam_high, cam_left_wrist, cam_right_wrist)
             content = []
             text_parts = user_message.split("<image>")
+            image_idx = 0
             for i, part in enumerate(text_parts):
                 if part.strip():
                     content.append({"type": "text", "text": part.strip()})
                 if i < len(text_parts) - 1:  # Add image after each <image> token except the last
-                    content.append({"type": "image", "image": image[0]})
+                    if image_idx < len(image):
+                        content.append({"type": "image", "image": image[image_idx]})
+                        image_idx += 1
+                    else:
+                        # Fallback to first image if not enough images
+                        content.append({"type": "image", "image": image[0] if image else None})
 
             messages.append({"role": "user", "content": content})
             
@@ -240,33 +242,10 @@ def evaluate_episode(model, processor, value_tokenizer, episode_data, device):
     }
 
 
-def plot_episode_values(episode_idx, episode_results, output_dir):
-    """Plot value changes for a single episode."""
-    steps = episode_results['steps']
-    predicted_values = episode_results['predicted_values']
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(steps, predicted_values, 'b-', label='Predicted Value', linewidth=2, marker='o', markersize=4)
-
-    plt.xlabel('Step', fontsize=12)
-    plt.ylabel('Value', fontsize=12)
-    plt.title(f'Episode {episode_idx} - Value Prediction', fontsize=14, fontweight='bold')
-    plt.legend(fontsize=11)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-    # Save figure
-    output_path = Path(output_dir) / f"episode_{episode_idx}_values.png"
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
-
-    rank0_print(f"Saved plot for episode {episode_idx} to {output_path}")
-
-
 def create_episode_animation(episode_idx, episode_data, episode_results, output_dir, filename=None):
     """Create animation for a single episode showing observation and predicted value changes."""
     if filename is None:
-        filename = f"episode_{episode_idx}_animation.gif"
+        filename = f"episode_{episode_idx}_animation.mp4"
 
     output_path = Path(output_dir) / filename
     rank0_print(f"Creating animation for episode {episode_idx}...")
@@ -275,132 +254,201 @@ def create_episode_animation(episode_idx, episode_data, episode_results, output_
     predicted_values = episode_results['predicted_values']
     max_steps = len(steps)
 
-    # Create figure with dual subplot layout
-    fig = plt.figure(figsize=(16, 8))
+    # Create figure with 2x3 GridSpec layout
+    # Top row: three camera views (left wrist, cam high, right wrist), Bottom row: prediction curve
+    fig = plt.figure(figsize=(20, 10))
+    gs = GridSpec(2, 3, figure=fig, height_ratios=[1, 1], hspace=0.3, wspace=0.3)
 
-    # Left subplot: observation image
-    ax1 = fig.add_subplot(121)
-    ax1.set_title(f'Episode {episode_idx} - Robot Observation', fontsize=14, fontweight='bold')
-    ax1.axis('off')  # Hide axes for image display
+    # Top row: three camera views - left to right: left wrist, cam high, right wrist
+    ax1 = fig.add_subplot(gs[0, 0])  # cam_left_wrist
+    ax1.set_title('cam_left_wrist', fontsize=12, fontweight='bold')
+    ax1.axis('off')
+    
+    ax2 = fig.add_subplot(gs[0, 1])  # cam_high
+    ax2.set_title('cam_high', fontsize=12, fontweight='bold')
+    ax2.axis('off')
+    
+    ax3 = fig.add_subplot(gs[0, 2])  # cam_right_wrist
+    ax3.set_title('cam_right_wrist', fontsize=12, fontweight='bold')
+    ax3.axis('off')
 
-    # Right subplot: predicted value curve
-    ax2 = fig.add_subplot(122)
-    ax2.set_title('Predicted Value Changes', fontsize=14, fontweight='bold')
-    ax2.set_xlabel('Step', fontsize=12)
-    ax2.set_ylabel('Predicted Value', fontsize=12)
-    ax2.grid(True, alpha=0.3)
+    # Bottom row: prediction curve (spans all 3 columns)
+    ax4 = fig.add_subplot(gs[1, :])  # Bottom row, spans all columns
+    ax4.set_title('Predicted Value Changes', fontsize=14, fontweight='bold')
+    ax4.set_xlabel('Step', fontsize=12)
+    ax4.set_ylabel('Predicted Value', fontsize=12)
+    ax4.grid(True, alpha=0.3)
+    # 固定坐标轴范围：横轴为完整 episode 长度，纵轴固定在 [-1, 0]
+    ax4.set_xlim(0, max_steps if max_steps > 0 else 1)
+    ax4.set_ylim(-1.05, 0.05)
 
-    # Initialize image display
-    img_display = None
-    current_image = None
+    # Initialize image displays for three cameras
+    img_displays = [None, None, None]
+    current_images = [None, None, None]
 
     # Initialize prediction curve
-    line, = ax2.plot([], [], 'b-', linewidth=3, marker='o', markersize=6, label='Predicted Value')
-    ax2.legend(fontsize=11)
+    line, = ax4.plot([], [], 'b-', linewidth=3, marker='o', markersize=3, label='Predicted Value')
+    ax4.legend(fontsize=11)
+    
+    # Initialize text annotation for current value (will be updated, not recreated)
+    value_text = None
 
     def update(frame):
-        nonlocal img_display, current_image
+        nonlocal img_displays, current_images, value_text
 
         step_idx = frame
         if step_idx >= max_steps:
             return []
 
-        # Update left subplot: observation image
+        # Update three camera views
+        # Image order: [0]=cam_high, [1]=cam_left_wrist, [2]=cam_right_wrist
+        # Display order: left wrist, cam high, right wrist
         if step_idx < len(episode_data):
             step_data = episode_data[step_idx]
             if 'image' in step_data and len(step_data['image']) > 0:
-                # Get the first image (usually the primary camera view)
-                image = step_data['image'][0]
+                # Map display axes to image indices
+                # ax1 (left) -> image[1] (cam_left_wrist)
+                # ax2 (center) -> image[0] (cam_high)
+                # ax3 (right) -> image[2] (cam_right_wrist)
+                camera_axes = [ax1, ax2, ax3]
+                camera_titles = ['cam_left_wrist', 'cam_high', 'cam_right_wrist']
+                image_indices = [1, 0, 2]  # Map display position to image array index
+                
+                for display_idx in range(min(3, len(step_data['image']))):
+                    image_idx = image_indices[display_idx]
+                    if image_idx < len(step_data['image']):
+                        image = step_data['image'][image_idx]
+                        
+                        # Convert PIL Image to numpy array if needed
+                        if hasattr(image, 'convert'):
+                            # PIL Image
+                            current_images[display_idx] = np.array(image.convert('RGB'))
+                        else:
+                            # Assume it's already a numpy array
+                            current_images[display_idx] = np.array(image)
+                        
+                        # Display image
+                        if img_displays[display_idx] is None:
+                            img_displays[display_idx] = camera_axes[display_idx].imshow(current_images[display_idx])
+                        else:
+                            img_displays[display_idx].set_data(current_images[display_idx])
+                        
+                        camera_axes[display_idx].set_title(f'{camera_titles[display_idx]} (Step {step_idx})',
+                                                           fontsize=12, fontweight='bold')
 
-                # Convert PIL Image to numpy array if needed
-                if hasattr(image, 'convert'):
-                    # PIL Image
-                    current_image = np.array(image.convert('RGB'))
-                else:
-                    # Assume it's already a numpy array
-                    current_image = np.array(image)
-
-                # Display image
-                if img_display is None:
-                    img_display = ax1.imshow(current_image)
-                else:
-                    img_display.set_data(current_image)
-
-                ax1.set_title(f'Episode {episode_idx} - Robot Observation (Step {step_idx})',
-                            fontsize=14, fontweight='bold')
-
-        # Update right subplot: prediction curve
+        # Update prediction curve
         # Show all predictions up to current step
         current_steps = steps[:step_idx+1]
         current_predictions = predicted_values[:step_idx+1]
 
         line.set_data(current_steps, current_predictions)
 
-        # Update plot limits dynamically
+        # 坐标轴范围保持不变，只更新曲线（如需，可保留当前值标注）
         if current_predictions:
-            y_min = min(current_predictions) * 0.95
-            y_max = max(current_predictions) * 1.05
-            ax2.set_xlim(0, max(current_steps) + 1)
-            ax2.set_ylim(y_min, y_max)
-
-            # Add current value annotation
             current_value = current_predictions[-1]
-            ax2.text(0.02, 0.98, f'Current: {current_value:.4f}',
-                    transform=ax2.transAxes, fontsize=12,
-                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            # Update or create text annotation
+            if value_text is None:
+                value_text = ax4.text(0.02, 0.98, f'Current: {current_value:.4f}',
+                                     transform=ax4.transAxes, fontsize=12,
+                                     verticalalignment='top',
+                                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            else:
+                value_text.set_text(f'Current: {current_value:.4f}')
 
-        return [line, img_display] if img_display else [line]
+        return [line] + [d for d in img_displays if d is not None]
 
     # Create animation
     try:
         ani = animation.FuncAnimation(fig, update, frames=max_steps, interval=500, blit=False)
 
-        # Save animation
-        rank0_print(f"Saving animation to {output_path}...")
-        ani.save(str(output_path), writer='pillow', fps=2, dpi=100)
-        rank0_print(f"Animation saved as {output_path}")
+        # Save animation using imageio
+        rank0_print(f"Saving video to {output_path}...")
+        
+        # Render all frames and collect them
+        # 使用 savefig 到内存缓冲区确保每一帧都是独立渲染的
+        frames = []
+        for frame_idx in tqdm(range(max_steps), desc="Rendering frames"):
+            update(frame_idx)
+            
+            # 保存到内存缓冲区，确保每一帧都是独立渲染的
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
+            buf.seek(0)
+            
+            # 读取 PNG 并转换为 numpy array
+            img = Image.open(buf)
+            frame = np.array(img.convert('RGB'))
+            frames.append(frame)
+            buf.close()
+        
+        # Save as video using imageio
+        imageio.mimwrite(
+            str(output_path), 
+            frames, 
+            fps=2, 
+            quality=5,
+            codec='libx264',
+        )
+        rank0_print(f"Video saved as {output_path}")
 
         # Save the final frame as a static image
         rank0_print("Saving final frame as static image...")
-        fig_final = plt.figure(figsize=(16, 8))
+        fig_final = plt.figure(figsize=(20, 10))
+        gs_final = GridSpec(2, 3, figure=fig_final, height_ratios=[1, 1], hspace=0.3, wspace=0.3)
 
-        # Left subplot: final observation
-        ax1_final = fig_final.add_subplot(121)
-        ax1_final.set_title(f'Episode {episode_idx} - Robot Observation (Final)', fontsize=14, fontweight='bold')
+        # Top row: three camera views (final) - left to right: left wrist, cam high, right wrist
+        ax1_final = fig_final.add_subplot(gs_final[0, 0])  # cam_left_wrist
+        ax1_final.set_title('cam_left_wrist (Final)', fontsize=12, fontweight='bold')
         ax1_final.axis('off')
+        
+        ax2_final = fig_final.add_subplot(gs_final[0, 1])  # cam_high
+        ax2_final.set_title('cam_high (Final)', fontsize=12, fontweight='bold')
+        ax2_final.axis('off')
+        
+        ax3_final = fig_final.add_subplot(gs_final[0, 2])  # cam_right_wrist
+        ax3_final.set_title('cam_right_wrist (Final)', fontsize=12, fontweight='bold')
+        ax3_final.axis('off')
 
+        # Bottom row: complete prediction curve (spans all 3 columns)
+        ax4_final = fig_final.add_subplot(gs_final[1, :])  # Bottom row, spans all columns
+        ax4_final.set_title('Predicted Value Changes (Complete)', fontsize=14, fontweight='bold')
+        ax4_final.set_xlabel('Step', fontsize=12)
+        ax4_final.set_ylabel('Predicted Value', fontsize=12)
+        ax4_final.grid(True, alpha=0.3)
+
+        # Display three camera views for final frame
+        # Image order: [0]=cam_high, [1]=cam_left_wrist, [2]=cam_right_wrist
+        # Display order: left wrist, cam high, right wrist
         if max_steps > 0 and max_steps <= len(episode_data):
             final_step_data = episode_data[max_steps - 1]
             if 'image' in final_step_data and len(final_step_data['image']) > 0:
-                final_image = final_step_data['image'][0]
-                if hasattr(final_image, 'convert'):
-                    final_image = np.array(final_image.convert('RGB'))
-                else:
-                    final_image = np.array(final_image)
-                ax1_final.imshow(final_image)
-
-        # Right subplot: complete prediction curve
-        ax2_final = fig_final.add_subplot(122)
-        ax2_final.set_title('Predicted Value Changes (Complete)', fontsize=14, fontweight='bold')
-        ax2_final.set_xlabel('Step', fontsize=12)
-        ax2_final.set_ylabel('Predicted Value', fontsize=12)
-        ax2_final.grid(True, alpha=0.3)
+                camera_axes_final = [ax1_final, ax2_final, ax3_final]
+                camera_titles_final = ['cam_left_wrist', 'cam_high', 'cam_right_wrist']
+                image_indices_final = [1, 0, 2]  # Map display position to image array index
+                
+                for display_idx in range(min(3, len(final_step_data['image']))):
+                    image_idx = image_indices_final[display_idx]
+                    if image_idx < len(final_step_data['image']):
+                        final_image = final_step_data['image'][image_idx]
+                        if hasattr(final_image, 'convert'):
+                            final_image = np.array(final_image.convert('RGB'))
+                        else:
+                            final_image = np.array(final_image)
+                        camera_axes_final[display_idx].imshow(final_image)
 
         # Plot complete curve
-        ax2_final.plot(steps, predicted_values, 'b-', linewidth=3, marker='o', markersize=6, label='Predicted Value')
-        ax2_final.legend(fontsize=11)
+        ax4_final.plot(steps, predicted_values, 'b-', linewidth=3, marker='o', markersize=3, label='Predicted Value')
+        ax4_final.legend(fontsize=11)
 
-        if predicted_values:
-            ax2_final.set_xlim(0, max(steps) + 1)
-            y_min = min(predicted_values) * 0.95
-            y_max = max(predicted_values) * 1.05
-            ax2_final.set_ylim(y_min, y_max)
+        # 使用与视频相同的坐标轴范围设置
+        ax4_final.set_xlim(0, max_steps if max_steps > 0 else 1)
+        ax4_final.set_ylim(-1.05, 0.05)
 
-            # Add final value annotation
-            final_value = predicted_values[-1]
-            ax2_final.text(0.02, 0.98, f'Final: {final_value:.4f}',
-                          transform=ax2_final.transAxes, fontsize=12,
-                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        # Add final value annotation
+        final_value = predicted_values[-1]
+        ax4_final.text(0.02, 0.98, f'Final: {final_value:.4f}',
+                        transform=ax4_final.transAxes, fontsize=12,
+                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
         # Save final frame as PNG
         final_image_path = output_path.with_suffix('.png')
@@ -415,7 +463,7 @@ def create_episode_animation(episode_idx, episode_data, episode_results, output_
     except Exception as e:
         rank0_print(f"Animation creation failed for episode {episode_idx}: {e}")
         plt.close(fig)
-        return False
+        raise  # 直接抛出异常，不返回 False
 
 
 def evaluate(model_args=None, data_args=None, eval_args=None, model=None, processor=None, value_tokenizer=None, output_dir=None):
@@ -474,23 +522,11 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
         emb = model.get_input_embeddings().weight.detach().cpu().float().numpy()  # type: ignore
         # Use value_tokenizer's extra_id_token_ids (which are the correct token IDs for <extra_id_{i}>)
         value_token_ids_check = value_tokenizer.extra_id_token_ids
-
-        # Check first few value token embeddings
-        if len(value_token_ids_check) >= 5:
-            value_embs = emb[value_token_ids_check[:5]]  # First 5 value tokens
-            emb_norms = np.linalg.norm(value_embs, axis=1)
-            rank0_print(f"Value token embedding norms (first 5): min={emb_norms.min():.4f}, "
-                       f"mean={emb_norms.mean():.4f}, max={emb_norms.max():.4f}")
-            # Compare to some regular token embeddings
-            regular_embs = emb[:1000]  # First 1000 tokens
-            regular_norms = np.linalg.norm(regular_embs, axis=1)
-            rank0_print(f"Regular token embedding norms (first 1000): min={regular_norms.min():.4f}, "
-                       f"mean={regular_norms.mean():.4f}, max={regular_norms.max():.4f}")
-        else:
-            raise ValueError("Not enough value tokens to check embeddings!")
     
-    # Load dataset
-    dataset_dir = data_args.dataset_use
+    # Load dataset - prefer eval_dataset_use if available, otherwise use dataset_use
+    dataset_dir = data_args.eval_dataset_use
+    rank0_print(f"Using eval_dataset_use for evaluation: {dataset_dir}")
+    
     # Convert relative path to absolute if needed
     if not os.path.isabs(dataset_dir):
         # Try to resolve relative to current working directory first
@@ -513,44 +549,47 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
     dataset = create_evaluation_dataset(
         dataset_dir,
         processor,
-        local_rank=0,
-        world_size=1,
-        num_workers=0,  # No multiprocessing for evaluation
+        camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
         value_tokenizer=value_tokenizer,  # Pass the created value_tokenizer
     )
     
-    # Group data by episode
-    # Different handling for different dataset types
+    # Group data by episode using episodes_meta (aligned with data_loader.py)
     rank0_print("Loading and grouping data by episode...")
 
     episode_data = defaultdict(list)
 
-    # LeRobot datasets have indices, use them for structured loading
-    if hasattr(dataset, 'indices') and dataset.indices:
-        # Sort indices by episode_idx, then by step to maintain order
-        sorted_indices = sorted(dataset.indices, key=lambda x: (x[0], x[1]))
-
-        for episode_idx, step in tqdm(sorted_indices, desc="Loading dataset"):
-            # Load the data for this episode and step
-            try:
-                lerobot_sample = dataset._load_frame(episode_idx, step)
-                data = dataset.batch_transform(lerobot_sample)
-
-                qwen_data = {
-                    "conversations": data['conversations'],
-                    "data_path": "",
-                    "image": data['image'],
-                    "value": data.get('value', None),  # Include true value if available
-                }
-
-                episode_data[episode_idx].append(qwen_data)
-            except Exception as e:
-                rank0_print(f"Error loading episode {episode_idx}, step {step}: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
+    # Use episodes_meta to access episode information (aligned with data_loader.py structure)
+    if hasattr(dataset, 'episodes_meta') and dataset.episodes_meta:
+        for ep_info in tqdm(dataset.episodes_meta, desc="Loading dataset"):
+            episode_idx = ep_info['episode_idx']
+            start_idx = ep_info['global_start_index']
+            length = ep_info['length']
+            
+            # Load each step in the episode sequentially
+            for step in range(length):
+                global_idx = start_idx + step
+                try:
+                    # Access underlying dataset directly (aligned with data_loader.py __iter__ method)
+                    raw_row = dataset.lerobot_dataset[global_idx]
+                    
+                    # Use _process_frame_data to process data (aligned with data_loader.py)
+                    processed_data = dataset._process_frame_data(raw_row, ep_info, step)
+                    
+                    qwen_data = {
+                        "conversations": processed_data['conversations'],
+                        "data_path": "",
+                        "image": processed_data['image'],
+                        "value": processed_data.get('meta_R', None),  # Use meta_R as true value
+                    }
+                    
+                    episode_data[episode_idx].append(qwen_data)
+                except Exception as e:
+                    rank0_print(f"Error loading episode {episode_idx}, step {step}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
     else:
-        raise ValueError("LeRobot dataset must provide indices for evaluation.")
+        raise ValueError("LeRobot dataset must provide episodes_meta for evaluation.")
     
     # Sort episodes by episode index
     episode_data = dict(sorted(episode_data.items()))
@@ -577,9 +616,6 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
             )
             all_results[episode_idx] = episode_results
             
-            # Plot episode values
-            plot_episode_values(episode_idx, episode_results, eval_output_dir)
-
             # Create animation for episode
             create_episode_animation(episode_idx, episode_items, episode_results, eval_output_dir)
             

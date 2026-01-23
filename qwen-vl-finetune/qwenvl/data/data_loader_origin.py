@@ -1,7 +1,6 @@
 import math
 import traceback
 from typing import Optional, List, Dict, Any
-import os, json
 
 import numpy as np
 from PIL import Image
@@ -82,25 +81,7 @@ class LeRobotValueDataset(IterableDataset):
         # Split into train/validation sets
         self.episodes_meta = self._split_train_val(self.episodes_meta, val_ratio, seed, split)
         # print(f"[DEBUG] Split complete, {len(self.episodes_meta)} episodes after split")
-        
-        #---------------------------------------------------------
-        # Compute per-class R ranges (success vs failure) from the episodes kept after split
-        # min_R = -(max_len - 1) per class, max_R = 0.0
-        self.class_min_R = {True: self.global_min_R, False: self.global_min_R}
-        self.class_max_R = {True: self.global_max_R, False: self.global_max_R}
-        try:
-            lengths_by_class = {True: [], False: []}
-            for ep in self.episodes_meta:
-                lengths_by_class[bool(ep.get('success', False))].append(int(ep['length']))
-            for cls in (True, False):
-                if lengths_by_class[cls]:
-                    max_len_cls = max(lengths_by_class[cls])
-                    self.class_min_R[cls] = -(max_len_cls - 1)
-                    self.class_max_R[cls] = 0.0
-        except Exception:
-            pass
-        #---------------------------------------------------------
-        
+
         print(f"[{split.upper()}] Dataset initialized. Episodes: {len(self.episodes_meta)}. "
               f"Global R range: [{self.global_min_R}, {self.global_max_R}]")
 
@@ -114,25 +95,8 @@ class LeRobotValueDataset(IterableDataset):
         # Limit maximum number of episodes
         if max_episodes is not None:
             total_episodes = min(total_episodes, max_episodes)
-        
-        #---------------------------------------------------------
-        # get result from meta/episodes_stats.jsonl
-        stats_path = os.path.join(self.lerobot_dataset.path, 'meta', 'episodes_stats.jsonl') if hasattr(self.lerobot_dataset, 'path') else os.path.join(self.lerobot_dataset.dataset_path if hasattr(self.lerobot_dataset, 'dataset_path') else self.dataset_dir, 'meta', 'episodes_stats.jsonl')
-        stats_map = {}
-        if os.path.exists(stats_path):
-            try:
-                with open(stats_path, 'r') as sf:
-                    for line in sf:
-                        try:
-                            j = json.loads(line)
-                            stats_map[int(j.get('episode_index', -1))] = j.get('stats', {})
-                        except Exception:
-                            continue
-            except Exception:
-                stats_map = {}
 
-        #---------------------------------------------------------
-        
+        # print(f"[DEBUG] Starting to iterate through {total_episodes} episodes...")
         for ep_idx in range(total_episodes):
             # Get global start and end indices in parquet/hf_dataset
             start_index = self.lerobot_dataset.episode_data_index["from"][ep_idx].item()
@@ -142,36 +106,13 @@ class LeRobotValueDataset(IterableDataset):
             instruction = self.lerobot_dataset.meta.episodes[ep_idx].get("tasks")
             if isinstance(instruction, list) and len(instruction) > 0:
                 instruction = str(instruction[0])
-            
-            #---------------------------------------------------------
-            # infer success from stats if available (prefer result.max) 1->success, 0->fail
-            success = True
-            stats = stats_map.get(ep_idx)
-            if stats and isinstance(stats, dict):
-                try:
-                    res = stats.get('result')
-                    if res is not None:
-                        max_v = None
-                        if isinstance(res.get('max'), list) and len(res.get('max'))>0:
-                            max_v = res.get('max')[0]
-                        elif isinstance(res.get('mean'), list) and len(res.get('mean'))>0:
-                            max_v = res.get('mean')[0]
-                        if max_v is not None:
-                            success = bool(max_v > 0)
-                except Exception:
-                    success = True
 
-            #---------------------------------------------------------
-        
             episodes.append({
                 'episode_idx': ep_idx,
                 'global_start_index': start_index,
                 'length': length,
                 'instruction': instruction,
-                # 'success': True # Assume all LeRobot episodes are successful demonstrations
-                #---------------------------------------------------------
-                'success': success
-                #---------------------------------------------------------
+                'success': True  # Assume all LeRobot episodes are successful demonstrations
             })
 
             # print(f"[DEBUG] Episode {ep_idx} metadata: {episodes[-1]}")
@@ -191,44 +132,9 @@ class LeRobotValueDataset(IterableDataset):
         n_val = int(n * val_ratio)
         if split == "val":
             selected_indices = indices[:n_val]
-
-            # Save val indices
-            try:
-                repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                scripts_dir = os.path.join(repo_root, 'scripts')
-                os.makedirs(scripts_dir, exist_ok=True)
-                fname = os.path.join(scripts_dir, f"val_indices_seed{int(seed)}_ratio{int(val_ratio*100)}.json")
-                payload = {
-                    'seed': int(seed),
-                    'val_ratio': float(val_ratio),
-                    'val_indices': [int(x) for x in selected_indices.tolist()]
-                }
-                with open(fname, 'w') as jf:
-                    json.dump(payload, jf)
-                print(f"[DEBUG] Saved val indices to {fname}")
-            except Exception as e:
-                print(f"[WARN] Failed to save val indices: {e}")
-
         else:
             selected_indices = indices[n_val:]
-
-            # Save train indices
-            try:
-                repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                scripts_dir = os.path.join(repo_root, 'scripts')
-                os.makedirs(scripts_dir, exist_ok=True)
-                fname = os.path.join(scripts_dir, f"train_indices_seed{int(seed)}_ratio{int(val_ratio*100)}.json")
-                payload = {
-                    'seed': int(seed),
-                    'val_ratio': float(val_ratio),
-                    'train_indices': [int(x) for x in selected_indices.tolist()]
-                }
-                with open(fname, 'w') as jf:
-                    json.dump(payload, jf)
-                print(f"[DEBUG] Saved train indices to {fname}")
-            except Exception as e:
-                print(f"[WARN] Failed to save train indices: {e}")
-
+            
         return [episodes[i] for i in selected_indices]
 
     def _calculate_R_value(self, current_step_idx, episode_length, is_final_step, episode_success=True):
@@ -243,15 +149,9 @@ class LeRobotValueDataset(IterableDataset):
             future_rewards = remaining_steps * (-1.0) + future_reward_val
             R = current_reward + future_rewards
 
-        # # Normalize
-        # min_R = self.global_min_R
-        # max_R = self.global_max_R
-        
-        #---------------------------------------------------------
-        # Normalize using per-class min/max R 
-        min_R = getattr(self, 'class_min_R', {}).get(bool(episode_success), self.global_min_R)
-        max_R = getattr(self, 'class_max_R', {}).get(bool(episode_success), self.global_max_R)
-        #---------------------------------------------------------
+        # Normalize
+        min_R = self.global_min_R
+        max_R = self.global_max_R
         
         if max_R != min_R:
             eps = 1e-7

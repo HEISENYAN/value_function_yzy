@@ -226,23 +226,23 @@ def train(attn_implementation=None):
     processor.save_pretrained(training_args.output_dir)
 
     # Run evaluation after training (only if value_tokenizer is used)
-    if value_tokenizer is not None:
-        print("Running evaluation after training...")
-        try:
-            evaluate(
-                model_args=model_args,
-                data_args=data_args,
-                model=model,
-                processor=processor,
-                value_tokenizer=value_tokenizer,
-                output_dir=training_args.output_dir
-            )
-        except Exception as e:
-            print(f"Evaluation failed: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print("Skipping evaluation: value_tokenizer not enabled in training")
+    # if value_tokenizer is not None:
+    #     print("Running evaluation after training...")
+    #     try:
+    #         evaluate(
+    #             model_args=model_args,
+    #             data_args=data_args,
+    #             model=model,
+    #             processor=processor,
+    #             value_tokenizer=value_tokenizer,
+    #             output_dir=training_args.output_dir
+    #         )
+    #     except Exception as e:
+    #         print(f"Evaluation failed: {e}")
+    #         import traceback
+    #         traceback.print_exc()
+    # else:
+    #     print("Skipping evaluation: value_tokenizer not enabled in training")
 
 
 if __name__ == "__main__":

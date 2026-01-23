@@ -4,10 +4,10 @@ Combines data processing and format conversion into a single streamlined pipelin
 """
 
 import os
-os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+from pathlib import Path
+os.environ["HF_LEROBOT_HOME"] = "/project/peilab/junhao/.cache/huggingface/lerobot/"
 
 import dataclasses
-from pathlib import Path
 import shutil
 from typing import Literal
 

@@ -1,6 +1,8 @@
 import json
+import random
 import logging
 import re
+import time
 import itertools
 import traceback
 import os
@@ -9,6 +11,7 @@ from typing import Dict, Optional, Sequence, List, Tuple, Any
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
@@ -24,6 +27,7 @@ DEFAULT_VIDEO_TOKEN = "<video>"
 
 local_rank = None
 
+
 def rank0_print(*args):
     if local_rank == 0:
         print(*args)
@@ -31,99 +35,39 @@ def rank0_print(*args):
 def _make_abs_paths(base: Path, files: str) -> str:
     return f"{(base / files).resolve()}"
 
+
 def update_processor_pixels(processor, data_args):
     logger = logging.getLogger(__name__)
 
     # --- Image Processor ---
     ip = processor.image_processor
-    rank0_print("=== BEFORE IMAGE PROCESSOR PARAMETERS ===")
-    rank0_print(f"Image min_pixels: {getattr(ip, 'min_pixels', 'N/A')}")
-    rank0_print(f"Image max_pixels: {getattr(ip, 'max_pixels', 'N/A')}")
-    rank0_print(f"ip.size: {ip.size}")
-    rank0_print(f"Image size (shortest_edge): {ip.size.get('shortest_edge', 'N/A')}")
-    rank0_print(f"Image size (longest_edge):  {ip.size.get('longest_edge', 'N/A')}")
 
-    # Use dynamic pixel range
     if hasattr(ip, "min_pixels") and hasattr(ip, "max_pixels"):
         ip.min_pixels = data_args.min_pixels
         ip.max_pixels = data_args.max_pixels
-        rank0_print(f"✅ Updated image_processor min_pixels to {data_args.min_pixels}")
-        rank0_print(f"✅ Updated image_processor max_pixels to {data_args.max_pixels}")
 
     if hasattr(ip, "size") and isinstance(ip.size, dict):
         ip.size["shortest_edge"] = data_args.min_pixels
         ip.size["longest_edge"] = data_args.max_pixels
-        rank0_print(
-            f"✅ Updated image_processor size['shortest_edge'] to {data_args.min_pixels}"
-        )
-        rank0_print(
-            f"✅ Updated image_processor size['longest_edge'] to {data_args.max_pixels}"
-        )
-
-    rank0_print("=== AFTER IMAGE PROCESSOR PARAMETERS ===")
-    rank0_print(f"Image min_pixels: {getattr(ip, 'min_pixels', 'N/A')}")
-    rank0_print(f"Image max_pixels: {getattr(ip, 'max_pixels', 'N/A')}")
-    rank0_print(f"Image size (shortest_edge): {ip.size.get('shortest_edge', 'N/A')}")
-    rank0_print(f"Image size (longest_edge):  {ip.size.get('longest_edge', 'N/A')}")
 
     # --- Video Processor ---
     if hasattr(processor, "video_processor") and processor.video_processor is not None:
         vp = processor.video_processor
-        rank0_print("\n=== BEFORE VIDEO PROCESSOR PARAMETERS ===")
-        rank0_print(f"Video min_pixels: {getattr(vp, 'min_pixels', 'N/A')}")
-        rank0_print(f"Video max_pixels: {getattr(vp, 'max_pixels', 'N/A')}")
-        rank0_print(f"Video min_frames: {getattr(vp, 'min_frames', 'N/A')}")
-        rank0_print(f"Video max_frames: {getattr(vp, 'max_frames', 'N/A')}")
-        rank0_print(f"Video fps: {getattr(vp, 'fps', 'N/A')}")
-        rank0_print(
-            f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
-        )
-        rank0_print(f"Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}")
 
         if hasattr(vp, "min_pixels") and hasattr(vp, "max_pixels"):
             vp.min_pixels = data_args.video_min_pixels
             vp.max_pixels = data_args.video_max_pixels
-            rank0_print(
-                f"✅ Updated Qwen2-VL video_processor min_pixels to {data_args.video_min_pixels}"
-            )
-            rank0_print(
-                f"✅ Updated Qwen2-VL video_processor max_pixels to {data_args.video_max_pixels}"
-            )
 
         if hasattr(vp, "min_frames") and hasattr(vp, "max_frames"):
             vp.min_frames = data_args.video_min_frames
             vp.max_frames = data_args.video_max_frames
-            rank0_print(
-                f"✅ Updated video_processor min_frames to {data_args.video_min_frames}"
-            )
-            rank0_print(
-                f"✅ Updated video_processor max_frames to {data_args.video_max_frames}"
-            )
 
         if hasattr(vp, "fps"):
             vp.fps = data_args.video_fps
-            rank0_print(f"✅ Updated video_processor fps to {data_args.video_fps}")
 
         if hasattr(vp, "size") and isinstance(vp.size, dict):
             vp.size["shortest_edge"] = data_args.video_min_pixels
             vp.size["longest_edge"] = data_args.video_max_pixels
-            rank0_print(
-                f"✅ Updated Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
-            )
-            rank0_print(
-                f"✅ Updated Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}"
-            )
-
-        rank0_print("=== AFTER VIDEO PROCESSOR PARAMETERS ===")
-        rank0_print(f"Video min_pixels: {getattr(vp, 'min_pixels', 'N/A')}")
-        rank0_print(f"Video max_pixels: {getattr(vp, 'max_pixels', 'N/A')}")
-        rank0_print(f"Video min_frames: {getattr(vp, 'min_frames', 'N/A')}")
-        rank0_print(f"Video max_frames: {getattr(vp, 'max_frames', 'N/A')}")
-        rank0_print(f"Video fps: {getattr(vp, 'fps', 'N/A')}")
-        rank0_print(
-            f"Video size (shortest_edge): {vp.size.get('shortest_edge', 'N/A')}"
-        )
-        rank0_print(f"Video size (longest_edge):  {vp.size.get('longest_edge', 'N/A')}")
 
     return processor
 
@@ -142,7 +86,6 @@ def _build_messages(item: Dict[str, Any], base_path: Path) -> List[Dict[str, Any
     image_pool = []
     for img in images:
         try:
-            # Direct PIL Image object - pass it directly
             image_pool.append({"type": "image", "image": img})
         except:
             raise ValueError(f"Unsupported image type: {type(img)}. Expected str (file path) or PIL.Image.Image")
@@ -407,15 +350,17 @@ class MultiDatasetIterator:
     def __init__(self, datasets_with_weights):
         """
         Args:
-            datasets_with_weights: List of (dataset, weight) tuples
+            datasets_with_weights: List of (dataset, weight) or (dataset, weight, size) tuples
         """
-        self.datasets = [ds for ds, _ in datasets_with_weights]
-        self.weights = [weight for _, weight in datasets_with_weights]
+        self.datasets = [ds for ds, _, _ in datasets_with_weights]
+        self.weights = [weight for _, weight, _ in datasets_with_weights]
+        self.sizes = [size for _, _, size in datasets_with_weights]
         self.iterators = []
 
         print(f"Multi-dataset iterator initialized with {len(self.datasets)} datasets:")
-        for i, (ds, weight) in enumerate(datasets_with_weights):
-            print(f"  Dataset {i+1}: ~{len(ds)} samples (weight: {weight:.3f})")
+        for i, (ds, weight, size) in enumerate(datasets_with_weights):
+            size_info = f"~{size} samples" if size is not None else "unknown size"
+            print(f"  Dataset {i+1}: {size_info} (weight: {weight:.3f})")
 
     def __iter__(self):
         # Create fresh iterators for each dataset
@@ -466,8 +411,9 @@ class MultiSupervisedDataset(IterableDataset):
         return iter(self.multi_iterator)
 
     def __len__(self):
-        # Approximate total length
-        return sum(len(ds) for ds in self.multi_iterator.datasets)
+        # Approximate total length using stored sizes
+        total = sum(size for size in self.multi_iterator.sizes if size is not None)
+        return total if total > 0 else 0
 
 
 class IterableSupervisedDataset(IterableDataset):
@@ -698,7 +644,6 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
     dataset_paths = [path.strip() for path in data_args.dataset_use.split(',') if path.strip()]
 
     if len(dataset_paths) == 1:
-        # 单数据集模式 (保持完全兼容)
         dataset_dir = dataset_paths[0]
         if not os.path.exists(dataset_dir):
             dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../", dataset_dir))
@@ -711,7 +656,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             split="train",
             val_ratio=getattr(data_args, "val_ratio", 0.1),
             seed=getattr(data_args, "seed", 42) + local_rank,
-            buffer_size=getattr(data_args, "buffer_size", 500),
+            buffer_size=getattr(data_args, "buffer_size", 5000),
             camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
             value_tokenizer=value_tokenizer,
             max_episodes=getattr(data_args, "max_train_episodes", None)
@@ -719,13 +664,27 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
 
         # Wrap with Qwen preprocessor
         train_dataset = IterableSupervisedDataset(le_train_dataset, processor, data_args, value_tokenizer)
+        
+        # Create validation dataset (10% of data) for training process evaluation
+        rank0_print(f"Creating validation dataset from training data")
+        le_val_dataset = LeRobotValueDataset(
+            dataset_dir=dataset_dir,
+            split="val",
+            val_ratio=getattr(data_args, "val_ratio", 0.1),
+            seed=getattr(data_args, "seed", 42) + local_rank,  # Same seed for consistent split
+            buffer_size=getattr(data_args, "buffer_size", 5000),
+            camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
+            value_tokenizer=value_tokenizer,
+        )
+        val_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
 
     else:
-        # 多数据集模式 - 高效实现
         rank0_print(f"Loading {len(dataset_paths)} LeRobot datasets for joint training")
 
         datasets_with_weights = []
+        val_datasets_with_weights = []
         total_samples = 0
+        val_total_samples = 0
 
         for i, path in enumerate(dataset_paths):
             # Resolve path
@@ -739,13 +698,13 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
 
             rank0_print(f"  Dataset {i+1}: {dataset_dir}")
 
-            # Create dataset with different seed for diversity
+            # Create training dataset with different seed for diversity
             le_dataset = LeRobotValueDataset(
                 dataset_dir=dataset_dir,
                 split="train",
                 val_ratio=getattr(data_args, "val_ratio", 0.1),
                 seed=getattr(data_args, "seed", 42) + local_rank + i * 1000,  # Different seed per dataset
-                buffer_size=getattr(data_args, "buffer_size", 500),
+                buffer_size=getattr(data_args, "buffer_size", 5000),
                 camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
                 value_tokenizer=value_tokenizer,
                 max_episodes=getattr(data_args, "max_train_episodes", None)
@@ -757,33 +716,35 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             # Calculate weight based on dataset size
             dataset_size = len(le_dataset)
             total_samples += dataset_size
-            datasets_with_weights.append((supervised_dataset, dataset_size))
+            datasets_with_weights.append((supervised_dataset, dataset_size, dataset_size))
+            
+            # Create validation dataset for this training dataset
+            le_val_dataset = LeRobotValueDataset(
+                dataset_dir=dataset_dir,
+                split="val",
+                val_ratio=getattr(data_args, "val_ratio", 0.1),
+                seed=getattr(data_args, "seed", 42) + local_rank + i * 1000,  # Same seed for consistent split
+                buffer_size=getattr(data_args, "buffer_size", 5000),
+                camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
+                value_tokenizer=value_tokenizer,
+                )
 
-        # Normalize weights
-        datasets_with_weights = [(ds, size/total_samples) for ds, size in datasets_with_weights]
+            val_supervised_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
+            
+            # Calculate weight based on dataset size
+            val_dataset_size = len(le_val_dataset)
+            val_total_samples += val_dataset_size
+            val_datasets_with_weights.append((val_supervised_dataset, val_dataset_size, val_dataset_size))
+
+        # Normalize weights (format: (dataset, weight, size))
+        datasets_with_weights = [(ds, size/total_samples, size) for ds, _, size in datasets_with_weights]
 
         # Create multi-dataset wrapper
         train_dataset = MultiSupervisedDataset(datasets_with_weights)
 
-    # === Instantiate Eval Dataset (Optional) ===
-    eval_dataset = None
-    if hasattr(data_args, 'eval_dataset_use') and data_args.eval_dataset_use:
-        eval_dir = data_args.eval_dataset_use
-        if not os.path.exists(eval_dir):
-             eval_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../", eval_dir))
-
-        if os.path.exists(eval_dir):
-            rank0_print(f"Loading Eval LeRobot dataset from: {eval_dir}")
-            le_eval_dataset = LeRobotValueDataset(
-                dataset_dir=eval_dir,
-                split="val",
-                val_ratio=0.0,
-                seed=42,
-                buffer_size=getattr(data_args, "buffer_size", 5000),
-                camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
-                value_tokenizer=value_tokenizer,
-            )
-            eval_dataset = IterableSupervisedDataset(le_eval_dataset, processor, data_args, value_tokenizer)
+        # Create multi-dataset wrapper for validation
+        val_datasets_with_weights = [(ds, size/val_total_samples, size) for ds, _, size in val_datasets_with_weights]
+        val_dataset = MultiSupervisedDataset(val_datasets_with_weights)
 
     # === Select Collator ===
     if getattr(data_args, "data_flatten", False) or getattr(data_args, "data_packing", False):
@@ -793,6 +754,6 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
 
     return dict(
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        eval_dataset=val_dataset,  # Use validation split from training data for training process evaluation
         data_collator=data_collator
     )
