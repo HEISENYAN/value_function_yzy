@@ -122,6 +122,24 @@ def create_github_repo(owner: str, repo: str, token: str):
         return False
 
 
+def get_authenticated_user(token: str) -> str:
+    """Return authenticated GitHub login for the token."""
+    r = requests.get('https://api.github.com/user', headers={'Authorization': f'token {token}'})
+    if r.status_code != 200:
+        raise RuntimeError('Failed to get authenticated user from GitHub API')
+    return r.json().get('login')
+
+
+def repo_has_push_permission(owner: str, repo: str, token: str) -> bool:
+    """Check repository permissions for the token (push permission)."""
+    url = f'https://api.github.com/repos/{owner}/{repo}'
+    r = requests.get(url, headers={'Authorization': f'token {token}'})
+    if r.status_code != 200:
+        return False
+    perms = r.json().get('permissions', {})
+    return perms.get('push', False)
+
+
 def init_commit_push(target: Path, owner: str, repo: str, token: str, branch: str = 'main'):
     # init git if needed
     if not (target / '.git').exists():
@@ -140,13 +158,28 @@ def init_commit_push(target: Path, owner: str, repo: str, token: str, branch: st
     except subprocess.CalledProcessError:
         print('Nothing to commit or commit failed')
 
-    remote_url = f'https://{token}@github.com/{owner}/{repo}.git'
+    # Use authenticated username in remote URL to avoid ambiguous credential mapping
+    try:
+        auth_user = get_authenticated_user(token)
+    except Exception:
+        auth_user = None
+
+    if auth_user:
+        remote_url = f'https://{auth_user}:{token}@github.com/{owner}/{repo}.git'
+    else:
+        remote_url = f'https://{token}@github.com/{owner}/{repo}.git'
     # add or set remote
     try:
         run(['git', 'remote', 'add', 'origin', remote_url], cwd=str(target))
     except subprocess.CalledProcessError:
         # remote may already exist: set-url
         run(['git', 'remote', 'set-url', 'origin', remote_url], cwd=str(target))
+
+    # before pushing, check permissions
+    if not repo_has_push_permission(owner, repo, token):
+        print(f"Warning: token does not seem to have push permission for {owner}/{repo}. Aborting push.")
+        print("Possible causes: token missing 'repo' scope, repo owned by another user/org without collaborator access, or branch protection.")
+        return
 
     # push
     run(['git', 'push', '-u', 'origin', branch], cwd=str(target))
