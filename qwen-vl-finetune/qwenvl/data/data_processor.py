@@ -621,7 +621,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
     Construct the dataset and collator, integrating the new LeRobotValueDataset.
     """
     from qwenvl.utils.value_tokenizer import ValueTokenizer
-    from .data_loader import LeRobotValueDataset
+    from .data_loader_yzy import LeRobotValueDataset
 
     # Distributed Setup
     global local_rank
@@ -667,16 +667,16 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
         
         # Create validation dataset (10% of data) for training process evaluation
         rank0_print(f"Creating validation dataset from training data")
-        le_val_dataset = LeRobotValueDataset(
-            dataset_dir=dataset_dir,
-            split="val",
-            val_ratio=getattr(data_args, "val_ratio", 0.1),
-            seed=getattr(data_args, "seed", 42) + local_rank,  # Same seed for consistent split
-            buffer_size=getattr(data_args, "buffer_size", 5000),
-            camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
-            value_tokenizer=value_tokenizer,
-        )
-        val_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
+        # le_val_dataset = LeRobotValueDataset(
+        #     dataset_dir=dataset_dir,
+        #     split="val",
+        #     val_ratio=getattr(data_args, "val_ratio", 0.1),
+        #     seed=getattr(data_args, "seed", 42) + local_rank,  # Same seed for consistent split
+        #     buffer_size=getattr(data_args, "buffer_size", 5000),
+        #     camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
+        #     value_tokenizer=value_tokenizer,
+        # )
+        # val_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
 
     else:
         rank0_print(f"Loading {len(dataset_paths)} LeRobot datasets for joint training")
@@ -719,22 +719,22 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             datasets_with_weights.append((supervised_dataset, dataset_size, dataset_size))
             
             # Create validation dataset for this training dataset
-            le_val_dataset = LeRobotValueDataset(
-                dataset_dir=dataset_dir,
-                split="val",
-                val_ratio=getattr(data_args, "val_ratio", 0.1),
-                seed=getattr(data_args, "seed", 42) + local_rank + i * 1000,  # Same seed for consistent split
-                buffer_size=getattr(data_args, "buffer_size", 5000),
-                camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
-                value_tokenizer=value_tokenizer,
-                )
+            # le_val_dataset = LeRobotValueDataset(
+            #     dataset_dir=dataset_dir,
+            #     split="val",
+            #     val_ratio=getattr(data_args, "val_ratio", 0.1),
+            #     seed=getattr(data_args, "seed", 42) + local_rank + i * 1000,  # Same seed for consistent split
+            #     buffer_size=getattr(data_args, "buffer_size", 5000),
+            #     camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
+            #     value_tokenizer=value_tokenizer,
+            #     )
 
-            val_supervised_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
+            # val_supervised_dataset = IterableSupervisedDataset(le_val_dataset, processor, data_args, value_tokenizer)
             
             # Calculate weight based on dataset size
-            val_dataset_size = len(le_val_dataset)
-            val_total_samples += val_dataset_size
-            val_datasets_with_weights.append((val_supervised_dataset, val_dataset_size, val_dataset_size))
+            # val_dataset_size = len(le_val_dataset)
+            # val_total_samples += val_dataset_size
+            # val_datasets_with_weights.append((val_supervised_dataset, val_dataset_size, val_dataset_size))
 
         # Normalize weights (format: (dataset, weight, size))
         datasets_with_weights = [(ds, size/total_samples, size) for ds, _, size in datasets_with_weights]
@@ -743,8 +743,8 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
         train_dataset = MultiSupervisedDataset(datasets_with_weights)
 
         # Create multi-dataset wrapper for validation
-        val_datasets_with_weights = [(ds, size/val_total_samples, size) for ds, _, size in val_datasets_with_weights]
-        val_dataset = MultiSupervisedDataset(val_datasets_with_weights)
+        # val_datasets_with_weights = [(ds, size/val_total_samples, size) for ds, _, size in val_datasets_with_weights]
+        # val_dataset = MultiSupervisedDataset(val_datasets_with_weights)
 
     # === Select Collator ===
     if getattr(data_args, "data_flatten", False) or getattr(data_args, "data_packing", False):
@@ -754,6 +754,6 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
 
     return dict(
         train_dataset=train_dataset,
-        eval_dataset=val_dataset,  # Use validation split from training data for training process evaluation
+        #eval_dataset=val_dataset,  # Use validation split from training data for training process evaluation
         data_collator=data_collator
     )

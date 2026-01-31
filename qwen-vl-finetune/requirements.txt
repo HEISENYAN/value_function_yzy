@@ -1,13 +1,16 @@
 transformers>=4.57.0
 torch==2.6.0
 torchvision==0.21.0
+tf-keras
 deepspeed==0.17.1
 triton==3.2.0
 accelerate==1.7.0
 torchcodec>=0.2
 peft==0.17.1
 qwen-vl-utils==0.0.14
+numpy==12.6.4
 h5py
+mpi4py
 opencv-python
 matplotlib
 tensorboard

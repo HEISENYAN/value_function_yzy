@@ -1,4 +1,5 @@
 qwen-vl-finetune/checkpoints/
+qwen-vl-finetune/tools/checkpoints/
 qwen-vl-finetune/data/
 qwen-vl-finetune/output/
 qwen-vl-finetune/eval_output/

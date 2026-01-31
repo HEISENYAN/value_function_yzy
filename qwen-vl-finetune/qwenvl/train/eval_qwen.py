@@ -21,7 +21,7 @@ sys.path.append(str(project_root))
 
 from transformers import Qwen2_5_VLForConditionalGeneration
 
-from qwenvl.data.data_loader import LeRobotValueDataset
+from qwenvl.data.data_loader_yzy import LeRobotValueDataset
 from qwenvl.train.argument import (
     ModelArguments,
     DataArguments,
