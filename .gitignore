@@ -1,9 +1,11 @@
 qwen-vl-finetune/checkpoints/*
-qwen-vl-finetune/tools/checkpoints/
-qwen-vl-finetune/data/
+qwen-vl-finetune/tools/checkpoints/*
+qwen-vl-finetune/data/*
 qwen-vl-finetune/output/*
-qwen-vl-finetune/eval_output/
-qwen-vl-finetune/wandb/
+qwen-vl-finetune/eval_output/*
+qwen-vl-finetune/wandb/*
+qwen-vl-finetune/eval_output/*
+
 __pycache__/
 .vscode/
 .cursor/
