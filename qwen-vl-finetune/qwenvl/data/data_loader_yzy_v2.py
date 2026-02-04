@@ -198,9 +198,12 @@ class LeRobotValueDataset(IterableDataset):
             future_reward_val = 0.0 if episode_success else -(penalty_ratio * episode_length)
             future_rewards = remaining_steps * (-1.0) + future_reward_val
             R = current_reward + future_rewards
+            if episode_success:
+                R = -self.global_min_R/(episode_length - 1) * R
 
         # Normalize
-        min_R = -(episode_length - 1) if episode_success else - math.floor((1+penalty_ratio) * episode_length - 1)
+        #min_R = -(episode_length - 1) if episode_success else - math.floor((1+penalty_ratio) * episode_length - 1)
+        min_R = self.global_min_R
         max_R = self.global_max_R
         
         if max_R != min_R:

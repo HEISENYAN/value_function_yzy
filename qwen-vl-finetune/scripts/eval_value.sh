@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Model configuration
-llm=./output/robotwin_single_view/checkpoint-3000  # Base model path
+llm=/mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/output/robotwin_rollout/checkpoint-9000  # Base model path
 
 # Dataset configuration
-eval_datasets=/project/peilab/junhao/.cache/huggingface/lerobot/beat_block_hammer_rollout
+eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout"
 # eval_datasets=/project/peilab/lerobot/folding_clothes
 
 # ValueTokenizer configuration

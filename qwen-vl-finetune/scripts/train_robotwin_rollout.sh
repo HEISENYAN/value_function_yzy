@@ -45,8 +45,8 @@ export WANDB_API_KEY=wandb_v1_QzGdiI6wSYFrzWIPv1u9UBtrX8f_bxxfgmmJiE84nUM524VbLx
 export WANDB_PROJECT="value-function"
 export WANDB_ENTITY="heisen0928-the-hong-kong-polytechnic-university"
 
-run_name="robotwin_rollout"
-output_dir=./output/robotwin_rollout
+run_name="robotwin_rolloutv2"
+output_dir=./output/robotwin_rolloutv2
 
 # Training arguments
 args="
@@ -65,21 +65,21 @@ args="
     --per_device_eval_batch_size $((batch_size*2)) \
     --gradient_accumulation_steps ${grad_accum_steps} \
     --image_size 224 \
-    --eval_strategy "no" \
-    --eval_steps 75 \
+    --eval_strategy "steps" \
     --dataloader_drop_last True \
+    --eval_steps 100 \
     --save_strategy "steps" \
     --save_steps 500 \
-    --save_total_limit 3 \
+    --save_total_limit 20 \
     --learning_rate ${lr} \
     --weight_decay 0.01 \
     --warmup_ratio 0.03 \
     --max_grad_norm 1 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 1 \
+    --logging_steps 10 \
     --model_max_length 4096 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 1 \
+    --dataloader_num_workers 8 \
     --use_value_tokenizer ${use_value_tokenizer} \
     --value_tokenizer_bins ${value_tokenizer_bins} \
     --value_tokenizer_min ${value_tokenizer_min} \
@@ -94,3 +94,4 @@ torchrun --nproc_per_node=8 \
      ${entry_file} ${args}
 
 #python -m debugpy --listen localhost:5678 --wait-for-client ${entry_file} ${args}
+#bash scripts/train_robotwin_rollout.sh

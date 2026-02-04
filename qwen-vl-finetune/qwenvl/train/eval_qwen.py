@@ -63,7 +63,7 @@ def create_evaluation_dataset(dataset_path, processor, **kwargs):
         transform=None,
         tokenizer=processor.tokenizer,
         split="val",  # Use val split for evaluation
-        val_ratio=1.0,  # Use all data (no train/val split for eval)
+        val_ratio=0.1,  # Use all data (no train/val split for eval)
         seed=42,  # Fixed seed for reproducibility
         buffer_size=5000,  # Larger buffer for evaluation
         camera_names=kwargs.get("camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
@@ -570,7 +570,7 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
                 global_idx = start_idx + step
                 try:
                     # Access underlying dataset directly (aligned with data_loader.py __iter__ method)
-                    raw_row = dataset.lerobot_dataset[global_idx]
+                    raw_row = dataset._get_lerobot_dataset()[global_idx]
                     
                     # Use _process_frame_data to process data (aligned with data_loader.py)
                     processed_data = dataset._process_frame_data(raw_row, ep_info, step)
