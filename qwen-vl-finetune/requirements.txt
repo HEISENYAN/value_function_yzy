@@ -1,0 +1,20 @@
+transformers>=4.57.0
+torch==2.6.0
+torchvision==0.21.0
+tf-keras
+deepspeed==0.17.1
+torchaudio==2.6.0
+triton==3.2.0
+accelerate==1.7.0
+torchcodec>=0.2
+peft==0.17.1
+qwen-vl-utils==0.0.14
+numpy==1.26.4
+h5py
+mpi4py
+opencv-python
+matplotlib
+tensorboard
+lerobot @ git+https://github.com/huggingface/lerobot.git@2b71789e15c35418b1ccecbceb81f4a598bfd883
+tyro
+huggingface_hub
