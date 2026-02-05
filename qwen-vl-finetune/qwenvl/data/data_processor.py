@@ -621,7 +621,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
     Construct the dataset and collator, integrating the new LeRobotValueDataset.
     """
     from qwenvl.utils.value_tokenizer import ValueTokenizer
-    from .data_loader_yzy_v2 import LeRobotValueDataset
+    from .data_loader_yzy_v3 import LeRobotValueDataset
 
     # Distributed Setup
     global local_rank

@@ -1,7 +1,10 @@
 #!/bin/bash
 
 # Model configuration
-llm=/mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/output/robotwin_rollout/checkpoint-9000  # Base model path
+export run_name="robotwin_rolloutv3"
+export step_num=2000
+
+llm=/mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/output/${run_name}/checkpoint-${step_num}  # Base model path
 
 # Dataset configuration
 eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout"
@@ -13,7 +16,7 @@ value_tokenizer_min=-1.0  # Minimum value
 value_tokenizer_max=0.0  # Maximum value
 
 # Evaluation configuration
-output_dir=./eval_output
+output_dir=./eval_output/${run_name}
 max_episodes=1000  # Number of episodes to evaluate
 
 # Launch evaluation

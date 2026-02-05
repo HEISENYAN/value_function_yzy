@@ -45,8 +45,8 @@ export WANDB_API_KEY=wandb_v1_QzGdiI6wSYFrzWIPv1u9UBtrX8f_bxxfgmmJiE84nUM524VbLx
 export WANDB_PROJECT="value-function"
 export WANDB_ENTITY="heisen0928-the-hong-kong-polytechnic-university"
 
-run_name="robotwin_rolloutv2"
-output_dir=./output/robotwin_rolloutv2
+run_name="robotwin_rolloutv3"
+output_dir=./output/${run_name}
 
 # Training arguments
 args="
