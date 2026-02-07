@@ -1,13 +1,15 @@
 #!/bin/bash
 
 # Model configuration
-export run_name="robotwin_rolloutv3"
-export step_num=2000
+export run_name="robotwin_clean_50v1"
+export step_num=10000
 
 llm=/mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/output/${run_name}/checkpoint-${step_num}  # Base model path
-
+cp /mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/tools/checkpoints/Qwen2.5-VL-3B-Instruct-resize/preprocessor_config.json ${llm}
+cp /mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/tools/checkpoints/Qwen2.5-VL-3B-Instruct-resize/video_preprocessor_config.json ${llm}
 # Dataset configuration
-eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout"
+eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/datasets/robotwin-50-50-clean"
+#eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout"
 # eval_datasets=/project/peilab/lerobot/folding_clothes
 
 # ValueTokenizer configuration

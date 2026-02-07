@@ -621,7 +621,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
     Construct the dataset and collator, integrating the new LeRobotValueDataset.
     """
     from qwenvl.utils.value_tokenizer import ValueTokenizer
-    from .data_loader_yzy_v3 import LeRobotValueDataset
+    from .data_loader_cleanv1 import LeRobotValueDataset
 
     # Distributed Setup
     global local_rank
@@ -654,7 +654,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
         le_train_dataset = LeRobotValueDataset(
             dataset_dir=dataset_dir,
             split="train",
-            val_ratio=getattr(data_args, "val_ratio", 0.1),
+            val_ratio=getattr(data_args, "val_ratio", 0.05),
             # CRITICAL (DDP/DeepSpeed):
             # Do NOT make train/val split depend on rank. If each rank samples a different subset,
             # the effective dataset length (#frames) differs per-rank, which can cause silent hangs
@@ -675,7 +675,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
         le_val_dataset = LeRobotValueDataset(
             dataset_dir=dataset_dir,
             split="val",
-            val_ratio=getattr(data_args, "val_ratio", 0.1),
+            val_ratio=getattr(data_args, "val_ratio", 0.05),
             seed=getattr(data_args, "seed", 42),  # Same seed for consistent split
             buffer_size=getattr(data_args, "buffer_size", 5000),
             camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
@@ -707,7 +707,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             le_dataset = LeRobotValueDataset(
                 dataset_dir=dataset_dir,
                 split="train",
-                val_ratio=getattr(data_args, "val_ratio", 0.1),
+                val_ratio=getattr(data_args, "val_ratio", 0.05),
                 # Keep seed independent of rank for DDP correctness; different datasets can still
                 # use different seeds to diversify sampling.
                 seed=getattr(data_args, "seed", 42),  # Different seed per dataset
@@ -729,7 +729,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             le_val_dataset = LeRobotValueDataset(
                 dataset_dir=dataset_dir,
                 split="val",
-                val_ratio=getattr(data_args, "val_ratio", 0.1),
+                val_ratio=getattr(data_args, "val_ratio", 0.05),
                 seed=getattr(data_args, "seed", 42),  # Same seed for consistent split
                 buffer_size=getattr(data_args, "buffer_size", 5000),
                 camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
