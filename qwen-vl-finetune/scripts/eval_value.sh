@@ -2,14 +2,14 @@
 
 # Model configuration
 export run_name="robotwin_clean_50v1"
-export step_num=10000
-
+export step_num=40000
+export eval_name="beat_block_hammer_rollout_wzj"
 llm=/mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/output/${run_name}/checkpoint-${step_num}  # Base model path
 cp /mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/tools/checkpoints/Qwen2.5-VL-3B-Instruct-resize/preprocessor_config.json ${llm}
 cp /mnt/bn/ic-vlm/zhufangqi/code/value_function/qwen-vl-finetune/tools/checkpoints/Qwen2.5-VL-3B-Instruct-resize/video_preprocessor_config.json ${llm}
 # Dataset configuration
-eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/datasets/robotwin-50-50-clean"
-#eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout"
+#eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/datasets/robotwin-50-50-clean"
+eval_datasets="/mnt/bn/ic-vlm/zhufangqi/code/.cache/huggingface/lerobot/beat_block_hammer_rollout_wzj"
 # eval_datasets=/project/peilab/lerobot/folding_clothes
 
 # ValueTokenizer configuration
@@ -18,7 +18,7 @@ value_tokenizer_min=-1.0  # Minimum value
 value_tokenizer_max=0.0  # Maximum value
 
 # Evaluation configuration
-output_dir=./eval_output/${run_name}
+output_dir=./eval_output/${run_name}-${step_num}-${eval_name}
 max_episodes=1000  # Number of episodes to evaluate
 
 # Launch evaluation
@@ -31,3 +31,5 @@ python qwenvl/train/eval_qwen.py \
     --output_dir ${output_dir} \
     --max_episodes ${max_episodes} \
 
+cd ./eval_output
+hf upload Heisen0928/value-function_eval_results ${run_name}-${step_num}-${eval_name} ${run_name}-${step_num}-${eval_name} --repo-type=dataset

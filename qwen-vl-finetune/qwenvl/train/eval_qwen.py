@@ -63,7 +63,7 @@ def create_evaluation_dataset(dataset_path, processor, **kwargs):
         transform=None,
         tokenizer=processor.tokenizer,
         split="val",  # Use val split for evaluation
-        val_ratio=0.05,  # Use all data (no train/val split for eval)
+        val_ratio=1.0,  # Use all data (no train/val split for eval)
         seed=42,  # Fixed seed for reproducibility
         buffer_size=5000,  # Larger buffer for evaluation
         camera_names=kwargs.get("camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
