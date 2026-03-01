@@ -16,7 +16,7 @@ sys.path.append(str(project_root))
 
 from qwenvl.data.data_loader_pair import PAIR_PROMPT_TEMPLATE, LeRobotPairDataset
 from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments
-from qwenvl.train.train_qwen_pair import QwenPairDeltaModel
+
 
 
 def rank0_print(*args):

@@ -7,7 +7,7 @@ from PIL import Image
 
 from torch.utils.data import IterableDataset, get_worker_info
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 PAIR_PROMPT_TEMPLATE = """You are a progress estimator for robot manipulation tasks.
 Given two sets of three-view observations at time t0 and time t1, estimate the signed progress change from t0 to t1.
