@@ -20,8 +20,8 @@ log_dir=${output_dir}/runs
 
 lr=1e-5
 value_head_lr=5e-5
-batch_size=16
-grad_accum_steps=8
+batch_size=2
+grad_accum_steps=4
 
 args="
     --deepspeed ${deepspeed} \
@@ -43,9 +43,9 @@ args="
     --per_device_eval_batch_size ${batch_size} \
     --gradient_accumulation_steps ${grad_accum_steps} \
     --eval_strategy steps \
-    --eval_steps 100 \
+    --eval_steps 100000 \
     --save_strategy steps \
-    --save_steps 500 \
+    --save_steps 1000 \
     --save_total_limit 5 \
     --learning_rate ${lr} \
     --value_head_lr ${value_head_lr} \

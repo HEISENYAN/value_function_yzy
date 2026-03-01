@@ -1,7 +1,7 @@
 #!/bin/bash
-export WANDB_API_KEY=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
-export WANDB_PROJECT="value-function-pair"
-export WANDB_ENTITY="fcdljh
+export WANDB_API_KEY=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
+export WANDB_PROJECT="value-function"
+export WANDB_ENTITY="heisen0928-the-hong-kong-polytechnic-university"
 
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
@@ -30,7 +30,7 @@ args="
     --pair_mode True \
     --pair_short_step 8 \
     --pair_mid_step 16 \
-    --pair_random_min 1 \
+    --pair_random_min 8 \
     --pair_add_backward True \
     --pair_use_t_group_weight True \
     --tune_mm_vision False \
@@ -38,14 +38,14 @@ args="
     --tune_mm_llm True \
     --bf16 \
     --output_dir ${output_dir} \
-    --max_steps 30000 \
+    --max_steps 300000 \
     --per_device_train_batch_size ${batch_size} \
     --per_device_eval_batch_size ${batch_size} \
     --gradient_accumulation_steps ${grad_accum_steps} \
     --eval_strategy steps \
-    --eval_steps 1000\
+    --eval_steps 1000000\
     --save_strategy steps \
-    --save_steps 3000 \
+    --save_steps 500 \
     --save_total_limit 10 \
     --learning_rate ${lr} \
     --value_head_lr ${value_head_lr} \
