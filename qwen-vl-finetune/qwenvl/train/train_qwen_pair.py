@@ -1,304 +1,308 @@
-import json
+# Pairwise delta training entrypoint for Qwen2.5-VL.
+
+import logging
 import os
+import pathlib
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Any
 
-import numpy as np
 import torch
+import torch.nn as nn
 import transformers
-from PIL import Image
-from tqdm import tqdm
-from transformers import AutoProcessor
+from transformers import AutoProcessor, Trainer
+from transformers import Qwen2_5_VLForConditionalGeneration
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from qwenvl.data.data_loader_pair import PAIR_PROMPT_TEMPLATE, LeRobotPairDataset
-<<<<<<< HEAD
-from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments
+from qwenvl.data.data_processor_pair import make_supervised_data_module
+from qwenvl.train.argument import ModelArguments, DataArguments, TrainingArguments
 
-=======
-from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments, TrainingArguments
->>>>>>> 5242e56008a742c514349ed33d2d51fecfa5b7ed
+
+local_rank = None
 
 
 def rank0_print(*args):
-    print(*args)
+    if local_rank == 0:
+        print(*args)
 
 
-def _to_pil_image(img_data):
-    img_rgb = img_data.permute(1, 2, 0)
-    img_rgb_np = img_rgb.numpy()
-    if img_rgb_np.dtype == np.float32:
-        img_rgb_np = np.clip(img_rgb_np * 255, 0, 255).astype(np.uint8)
-    return Image.fromarray(img_rgb_np, mode="RGB")
+def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
+    if trainer.deepspeed:
+        torch.cuda.synchronize()
+        trainer.save_model(output_dir)
+        return
+    state_dict = trainer.model.state_dict()
+    if trainer.args.should_save:
+        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
+        del state_dict
+        trainer._save(output_dir, state_dict=cpu_state_dict)
 
 
-def _load_pair_state_if_exists(model, checkpoint_dir: str):
-    pt_path = Path(checkpoint_dir) / "pytorch_model.bin"
-    st_path = Path(checkpoint_dir) / "model.safetensors"
-    if pt_path.exists():
-        state = torch.load(pt_path, map_location="cpu")
-        model.load_state_dict(state, strict=False)
-        rank0_print(f"Loaded pair state dict from {pt_path}")
-    elif st_path.exists():
-        from safetensors.torch import load_file
-        state = load_file(str(st_path))
-        model.load_state_dict(state, strict=False)
-        rank0_print(f"Loaded pair state dict from {st_path}")
+def set_backbone_trainable(model_args, backbone):
+    if model_args.tune_mm_vision:
+        for _, p in backbone.visual.named_parameters():
+            p.requires_grad = True
     else:
-        rank0_print("No consolidated pair checkpoint file found; using backbone-pretrained + in-model weights.")
+        for _, p in backbone.visual.named_parameters():
+            p.requires_grad = False
+
+    if model_args.tune_mm_mlp:
+        for _, p in backbone.visual.merger.named_parameters():
+            p.requires_grad = True
+    else:
+        for _, p in backbone.visual.merger.named_parameters():
+            p.requires_grad = False
+
+    if model_args.tune_mm_llm:
+        for _, p in backbone.language_model.named_parameters():
+            p.requires_grad = True
+        backbone.lm_head.requires_grad = True
+    else:
+        for _, p in backbone.language_model.named_parameters():
+            p.requires_grad = False
+        backbone.lm_head.requires_grad = False
 
 
-def load_model_and_processor(model_name_or_path, attn_implementation=None):
-    rank0_print(f"Loading pair model from: {model_name_or_path}")
-    model = QwenPairDeltaModel(
-        model_name_or_path=model_name_or_path,
-        cache_dir=None,
-        attn_implementation=attn_implementation,
-        bf16=True,
-    )
-    _load_pair_state_if_exists(model, model_name_or_path)
+class QwenPairDeltaModel(nn.Module):
+    def __init__(self, model_name_or_path: str, cache_dir=None, attn_implementation=None, bf16=False):
+        super().__init__()
+        self.backbone = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_name_or_path,
+            cache_dir=cache_dir,
+            attn_implementation=attn_implementation,
+            dtype=(torch.bfloat16 if bf16 else None),
+        )
+        hidden_size = self.backbone.config.hidden_size
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, 1),
+            nn.Tanh(),
+        )
+        self.gradient_checkpointing_enabled = False
 
-    processor = AutoProcessor.from_pretrained(model_name_or_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    model.backbone.config.use_cache = False
-    return model, processor, device
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """Enable gradient checkpointing for memory optimization."""
+        self.gradient_checkpointing_enabled = True
+        self.backbone.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
+        logging.info("Enabled gradient checkpointing for QwenPairDeltaModel")
 
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self.gradient_checkpointing_enabled = False
+        self.backbone.gradient_checkpointing_disable()
+        logging.info("Disabled gradient checkpointing for QwenPairDeltaModel")
 
-def build_pair_messages(instruction: str):
-    return [
-        {"role": "user", "content": [{"type": "text", "text": PAIR_PROMPT_TEMPLATE.format(instruction=instruction)}]},
-        {"role": "assistant", "content": [{"type": "text", "text": ""}]},
-    ]
+    def is_gradient_checkpointing_enabled(self):
+        """Check if gradient checkpointing is enabled."""
+        return self.gradient_checkpointing_enabled
 
+    @property
+    def config(self):
+        return self.backbone.config
 
-def _expand_message_with_images(prompt_text: str, images: List[Image.Image]):
-    content = []
-    text_parts = prompt_text.split("<image>")
-    image_idx = 0
-    for i, part in enumerate(text_parts):
-        if part.strip():
-            content.append({"type": "text", "text": part.strip()})
-        if i < len(text_parts) - 1:
-            content.append({"type": "image", "image": images[image_idx]})
-            image_idx += 1
-    return content
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        pixel_values=None,
+        image_grid_thw=None,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        position_ids=None,
+        delta_labels=None,
+        t_group_weights=None,
+        **kwargs,
+    ):
+        outputs = self.backbone(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            image_grid_thw=image_grid_thw,
+            pixel_values_videos=pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+            position_ids=position_ids,
+            output_hidden_states=True,
+            return_dict=True,
+            use_cache=False,
+        )
 
-
-@torch.no_grad()
-def predict_delta(model, processor, device, instruction: str, images: List[Image.Image]) -> float:
-    prompt = PAIR_PROMPT_TEMPLATE.format(instruction=instruction)
-    user_content = _expand_message_with_images(prompt, images)
-    messages = [
-        {"role": "user", "content": user_content},
-        {"role": "assistant", "content": [{"type": "text", "text": ""}]},
-    ]
-    inputs = processor.apply_chat_template(
-        messages, tokenize=True, return_dict=True, return_tensors="pt"
-    )
-    for k, v in list(inputs.items()):
-        if isinstance(v, torch.Tensor):
-            inputs[k] = v.to(device)
-
-    outputs = model(**inputs)
-    return float(outputs["delta_pred"][0].item())
-
-
-def _get_episode_instruction(meta_episode) -> str:
-    instruction = meta_episode.get("tasks")
-    if isinstance(instruction, list) and len(instruction) > 0:
-        return str(instruction[0])
-    if instruction is None:
-        return "perform the task"
-    return str(instruction)
-
-
-def _frame_triplet(frame_cache, step: int, camera_names: List[str]):
-    return [frame_cache[step][cam] for cam in camera_names]
-
-
-def evaluate_episode(model, processor, device, dataset, ep_info, data_args) -> Dict:
-    camera_names = getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"])
-    T = ep_info["length"]
-    start = ep_info["global_start_index"]
-    instruction = ep_info["instruction"]
-
-    frame_cache = {}
-    for step in range(T):
-        row = dataset[start + step]
-        frame_cache[step] = {}
-        for cam in camera_names:
-            frame_cache[step][cam] = _to_pil_image(row[f"observation.images.{cam}"])
-
-    anchor_errors = []
-    zero_abs_vals = []
-    fb_errors = []
-    phi = []
-    delta16_gt_delta8 = []
-
-    short_step = int(getattr(data_args, "pair_short_step", 8))
-    mid_step = int(getattr(data_args, "pair_mid_step", 16))
-    random_min = int(getattr(data_args, "pair_random_min", 1))
-    rng = np.random.default_rng(42 + ep_info["episode_idx"])
-
-    for t in range(T):
-        imgs_anchor = _frame_triplet(frame_cache, 0, camera_names) + _frame_triplet(frame_cache, t, camera_names)
-        pred_anchor = predict_delta(model, processor, device, instruction, imgs_anchor)
-        target_anchor = t / T
-        phi.append(pred_anchor)
-        anchor_errors.append(abs(pred_anchor - target_anchor))
-
-        imgs_zero = _frame_triplet(frame_cache, t, camera_names) + _frame_triplet(frame_cache, t, camera_names)
-        pred_zero = predict_delta(model, processor, device, instruction, imgs_zero)
-        zero_abs_vals.append(abs(pred_zero))
-
-        forward_pairs = [(0, t, t / T)]
-        if t >= short_step:
-            forward_pairs.append((t - short_step, t, short_step / T))
-        if t >= mid_step:
-            forward_pairs.append((t - mid_step, t, mid_step / T))
-        forward_pairs.append((t, t, 0.0))
-        if t >= random_min:
-            r = int(rng.integers(random_min, t + 1))
-            forward_pairs.append((t - r, t, r / T))
-
-        for a, b, _ in forward_pairs:
-            imgs_f = _frame_triplet(frame_cache, a, camera_names) + _frame_triplet(frame_cache, b, camera_names)
-            imgs_b = _frame_triplet(frame_cache, b, camera_names) + _frame_triplet(frame_cache, a, camera_names)
-            pred_f = predict_delta(model, processor, device, instruction, imgs_f)
-            pred_b = predict_delta(model, processor, device, instruction, imgs_b)
-            fb_errors.append(abs(pred_f + pred_b))
-
-        if t >= mid_step and t >= short_step:
-            imgs16 = _frame_triplet(frame_cache, t - mid_step, camera_names) + _frame_triplet(frame_cache, t, camera_names)
-            imgs8 = _frame_triplet(frame_cache, t - short_step, camera_names) + _frame_triplet(frame_cache, t, camera_names)
-            pred16 = abs(predict_delta(model, processor, device, instruction, imgs16))
-            pred8 = abs(predict_delta(model, processor, device, instruction, imgs8))
-            delta16_gt_delta8.append(float(pred16 > pred8))
-
-    monotonic = []
-    for t in range(len(phi) - 1):
-        monotonic.append(float(phi[t + 1] >= phi[t]))
-
-    return {
-        "episode_idx": int(ep_info["episode_idx"]),
-        "episode_len": int(T),
-        "E_anchor": float(np.mean(anchor_errors)) if anchor_errors else None,
-        "E_zero": float(np.mean(zero_abs_vals)) if zero_abs_vals else None,
-        "E_fb": float(np.mean(fb_errors)) if fb_errors else None,
-        "scale_consistency": {
-            "monotonicity_ratio": float(np.mean(monotonic)) if monotonic else None,
-            "delta16_gt_delta8_ratio": float(np.mean(delta16_gt_delta8)) if delta16_gt_delta8 else None,
-        },
-    }
-
-
-def evaluate(model_args=None, data_args=None, eval_args=None):
-    if model_args is None or data_args is None or eval_args is None:
-        parser = transformers.HfArgumentParser((ModelArguments, DataArguments, EvalArguments, TrainingArguments))
-        model_args, data_args, eval_args, _ = parser.parse_args_into_dataclasses()
-
-    eval_output_dir = Path(eval_args.eval_output_dir)
-    eval_output_dir.mkdir(parents=True, exist_ok=True)
-
-    model_name_or_path = os.path.expanduser(model_args.model_name_or_path)
-    model, processor, device = load_model_and_processor(model_name_or_path)
-
-    dataset_dir = data_args.eval_dataset_use or data_args.dataset_use
-    if not os.path.isabs(dataset_dir):
-        abs_path = os.path.abspath(dataset_dir)
-        if os.path.exists(abs_path):
-            dataset_dir = abs_path
+        last_hidden = outputs.hidden_states[-1]  # [B, L, W]
+        if attention_mask is None:
+            pooled = last_hidden[:, -1, :]
         else:
-            dataset_dir = str(Path(__file__).parent.parent.parent.parent / dataset_dir)
-    if not os.path.exists(dataset_dir):
-        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+            if attention_mask.dtype != torch.long:
+                mask_long = attention_mask.long()
+            else:
+                mask_long = attention_mask
+            last_idx = torch.clamp(mask_long.sum(dim=1) - 1, min=0)
+            batch_idx = torch.arange(last_hidden.size(0), device=last_hidden.device)
+            pooled = last_hidden[batch_idx, last_idx, :]
 
-    rank0_print(f"Loading evaluation dataset from: {dataset_dir}")
+        delta_pred = self.value_head(pooled).squeeze(-1)
 
-    base_seed = getattr(data_args, "seed", 42)
-    val_ratio = getattr(data_args, "val_ratio", 0.1)
-    camera_names = getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"])
+        loss = None
+        if delta_labels is not None:
+            target = torch.clamp(delta_labels, -1.0, 1.0)
+            mse = (delta_pred - target) ** 2
+            if t_group_weights is not None:
+                w = torch.clamp(t_group_weights, min=0.0)
+                w_sum = torch.clamp(w.sum(), min=1e-8)
+                loss = (mse * w).sum() / w_sum
+            else:
+                loss = mse.mean()
 
-    pair_dataset = LeRobotPairDataset(
-        dataset_dir=dataset_dir,
-        transform=None,
-        tokenizer=None,
-        language_instruction="perform the task",
-        seed=base_seed,
-        val_ratio=val_ratio,
-        buffer_size=500,
-        camera_names=camera_names,
-        split="val",
-        max_episodes=None,
-        pair_short_step=getattr(data_args, "pair_short_step", 8),
-        pair_mid_step=getattr(data_args, "pair_mid_step", 16),
-        pair_random_min=getattr(data_args, "pair_random_min", 1),
-        pair_add_backward=getattr(data_args, "pair_add_backward", True),
-        pair_prompt_style=getattr(data_args, "pair_prompt_style", "explicit_t0_t1"),
-    )
+        return {"loss": loss, "delta_pred": delta_pred}
 
-    lerobot_dataset = pair_dataset.lerobot_dataset
-    episodes = list(pair_dataset.episodes_meta)
 
-    max_episodes = eval_args.max_episodes if eval_args.max_episodes is not None else len(episodes)
-    episodes = episodes[: max_episodes]
+class PairRegressionTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        delta_labels = inputs.pop("delta_labels")
+        t_group_weights = inputs.pop("t_group_weights", None)
+        if not getattr(self.args, "pair_use_t_group_weight", True):
+            t_group_weights = None
+        outputs = model(**inputs, delta_labels=delta_labels, t_group_weights=t_group_weights)
+        loss = outputs["loss"]
+        return (loss, outputs) if return_outputs else loss
 
-    rank0_print(
-        f"Using val split from LeRobotPairDataset for offline eval: "
-        f"{len(episodes)} episodes (val_ratio={val_ratio}, seed={base_seed})"
-    )
+    def create_optimizer(self):
+        if self.optimizer is not None:
+            return self.optimizer
 
-    episode_metrics = []
-    for ep_info in tqdm(episodes, desc="Evaluating pair episodes"):
-        m = evaluate_episode(model, processor, device, lerobot_dataset, ep_info, data_args)
-        episode_metrics.append(m)
+        if getattr(self.args, "value_head_lr", None) is None:
+            return super().create_optimizer()
 
-    def _collect(key):
-        vals = [m[key] for m in episode_metrics if m[key] is not None]
-        return float(np.mean(vals)) if vals else None
+        model = self.model
+        no_decay = ["bias", "LayerNorm.weight"]
 
-    mono_vals = [
-        m["scale_consistency"]["monotonicity_ratio"]
-        for m in episode_metrics
-        if m["scale_consistency"]["monotonicity_ratio"] is not None
-    ]
-    d16_gt_d8_vals = [
-        m["scale_consistency"]["delta16_gt_delta8_ratio"]
-        for m in episode_metrics
-        if m["scale_consistency"]["delta16_gt_delta8_ratio"] is not None
-    ]
+        head_params_decay = []
+        head_params_nodecay = []
+        base_params_decay = []
+        base_params_nodecay = []
 
-    summary = {
-        "num_episodes": len(episode_metrics),
-        "global_metrics": {
-            "E_anchor": _collect("E_anchor"),
-            "E_zero": _collect("E_zero"),
-            "E_fb": _collect("E_fb"),
-            "scale_consistency": {
-                "monotonicity_ratio": float(np.mean(mono_vals)) if mono_vals else None,
-                "delta16_gt_delta8_ratio": float(np.mean(d16_gt_d8_vals)) if d16_gt_d8_vals else None,
+        for n, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            in_head = n.startswith("value_head")
+            is_no_decay = any(nd in n for nd in no_decay)
+            if in_head and not is_no_decay:
+                head_params_decay.append(p)
+            elif in_head and is_no_decay:
+                head_params_nodecay.append(p)
+            elif not in_head and not is_no_decay:
+                base_params_decay.append(p)
+            else:
+                base_params_nodecay.append(p)
+
+        optimizer_grouped_parameters = [
+            {
+                "params": base_params_decay,
+                "weight_decay": self.args.weight_decay,
+                "lr": self.args.learning_rate,
             },
-        },
-    }
+            {
+                "params": base_params_nodecay,
+                "weight_decay": 0.0,
+                "lr": self.args.learning_rate,
+            },
+            {
+                "params": head_params_decay,
+                "weight_decay": getattr(self.args, "value_head_weight_decay", 0.0),
+                "lr": self.args.value_head_lr,
+            },
+            {
+                "params": head_params_nodecay,
+                "weight_decay": 0.0,
+                "lr": self.args.value_head_lr,
+            },
+        ]
+        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+        self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
+        return self.optimizer
 
-    summary_path = eval_output_dir / "evaluation_summary_pair.json"
-    with open(summary_path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
 
-    episode_path = eval_output_dir / "episode_metrics_pair.jsonl"
-    with open(episode_path, "w", encoding="utf-8") as f:
-        for m in episode_metrics:
-            f.write(json.dumps(m, ensure_ascii=False) + "\n")
+def train(attn_implementation=None):
+    global local_rank
 
-    rank0_print(f"Saved: {summary_path}")
-    rank0_print(f"Saved: {episode_path}")
-    rank0_print(f"Done. Episodes: {len(episode_metrics)}")
+    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
+    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    local_rank = training_args.local_rank
+    os.makedirs(training_args.output_dir, exist_ok=True)
+
+    if not getattr(data_args, "pair_mode", False):
+        rank0_print("[WARN] --pair_mode is False. train_qwen_pair.py still runs pair training by design.")
+
+    model = QwenPairDeltaModel(
+        model_name_or_path=model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        attn_implementation=attn_implementation,
+        bf16=training_args.bf16,
+    )
+    data_args.model_type = "qwen2.5vl"
+    model.backbone.config.use_cache = False
+
+    processor = AutoProcessor.from_pretrained(model_args.model_name_or_path)
+
+    if training_args.gradient_checkpointing:
+        if hasattr(model.backbone, "enable_input_require_grads"):
+            model.backbone.enable_input_require_grads()
+        else:
+            def make_inputs_require_grad(module, input, output):
+                output.requires_grad_(True)
+            model.backbone.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+        use_fast=False,
+    )
+
+    if training_args.lora_enable:
+        from peft import LoraConfig, TaskType, get_peft_model
+        for p in model.backbone.parameters():
+            p.requires_grad = False
+        lora_config = LoraConfig(
+            r=training_args.lora_r or 64,
+            lora_alpha=training_args.lora_alpha or 128,
+            lora_dropout=training_args.lora_dropout or 0.05,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            bias="none",
+            task_type=TaskType.CAUSAL_LM,
+        )
+        model.backbone = get_peft_model(model.backbone, lora_config)
+        for p in model.value_head.parameters():
+            p.requires_grad = True
+    else:
+        set_backbone_trainable(model_args, model.backbone)
+        for p in model.value_head.parameters():
+            p.requires_grad = True
+
+    data_module = make_supervised_data_module(processor, data_args=data_args, model_args=model_args, value_tokenizer=None)
+
+    trainer = PairRegressionTrainer(
+        model=model,
+        processing_class=tokenizer,
+        args=training_args,
+        **data_module,
+    )
+
+    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+        logging.info("checkpoint found, resume training")
+        trainer.train(resume_from_checkpoint=True)
+    else:
+        trainer.train()
+    trainer.save_state()
+
+    model.backbone.config.use_cache = True
+    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    processor.save_pretrained(training_args.output_dir)
 
 
 if __name__ == "__main__":
-    evaluate()
+    train(attn_implementation=None)
