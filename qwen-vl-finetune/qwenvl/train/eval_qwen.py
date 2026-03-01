@@ -498,7 +498,7 @@ def evaluate(model_args=None, data_args=None, eval_args=None, model=None, proces
             model_args, data_args, eval_args = parser.parse_args_into_dataclasses()
 
         # Create output directory
-        eval_output_dir = Path(eval_args.output_dir)
+        eval_output_dir = Path(eval_args.eval_output_dir)
         eval_output_dir.mkdir(parents=True, exist_ok=True)
 
         # Load model and processor

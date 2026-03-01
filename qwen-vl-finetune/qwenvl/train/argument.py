@@ -72,5 +72,5 @@ class TrainingArguments(transformers.TrainingArguments):
 
 @dataclass
 class EvalArguments:
-    output_dir: str = field(default="./eval_output")
+    eval_output_dir: str = field(default="./eval_output")
     max_episodes: Optional[int] = field(default=None)

@@ -15,8 +15,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
 from qwenvl.data.data_loader_pair import PAIR_PROMPT_TEMPLATE, LeRobotPairDataset
-from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments
-from qwenvl.train.train_qwen_pair import QwenPairDeltaModel
+from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments, TrainingArguments
 
 
 def rank0_print(*args):
@@ -195,10 +194,10 @@ def evaluate_episode(model, processor, device, dataset, ep_info, data_args) -> D
 
 def evaluate(model_args=None, data_args=None, eval_args=None):
     if model_args is None or data_args is None or eval_args is None:
-        parser = transformers.HfArgumentParser((ModelArguments, DataArguments, EvalArguments))
-        model_args, data_args, eval_args = parser.parse_args_into_dataclasses()
+        parser = transformers.HfArgumentParser((ModelArguments, DataArguments, EvalArguments, TrainingArguments))
+        model_args, data_args, eval_args, _ = parser.parse_args_into_dataclasses()
 
-    eval_output_dir = Path(eval_args.output_dir)
+    eval_output_dir = Path(eval_args.eval_output_dir)
     eval_output_dir.mkdir(parents=True, exist_ok=True)
 
     model_name_or_path = os.path.expanduser(model_args.model_name_or_path)
