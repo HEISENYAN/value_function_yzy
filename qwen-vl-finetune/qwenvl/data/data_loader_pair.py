@@ -138,7 +138,7 @@ class LeRobotPairDataset(IterableDataset):
             forward_pairs.append((t - self.pair_mid_step, t, float(self.pair_mid_step / T), "mid"))
         forward_pairs.append((t, t, 0.0, "zero"))
         if t >= self.pair_random_min:
-            r = int(rng.integers(self.pair_random_min, t))
+            r = int(rng.integers(self.pair_random_min, t + 1))
             forward_pairs.append((t - r, t, float(r / T), "random"))
         return forward_pairs
 
