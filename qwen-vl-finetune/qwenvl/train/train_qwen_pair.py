@@ -72,7 +72,7 @@ class QwenPairDeltaModel(nn.Module):
             model_name_or_path,
             cache_dir=cache_dir,
             attn_implementation=attn_implementation,
-            dtype=(torch.bfloat16 if bf16 else None),
+            torch_dtype=(torch.bfloat16 if bf16 else None),
         )
         hidden_size = self.backbone.config.hidden_size
         self.value_head = nn.Sequential(
@@ -118,7 +118,7 @@ class QwenPairDeltaModel(nn.Module):
         t_group_weights=None,
         **kwargs,
     ):
-        outputs = self.backbone(
+        outputs = self.backbone.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
@@ -126,12 +126,11 @@ class QwenPairDeltaModel(nn.Module):
             pixel_values_videos=pixel_values_videos,
             video_grid_thw=video_grid_thw,
             position_ids=position_ids,
-            output_hidden_states=True,
             return_dict=True,
             use_cache=False,
         )
 
-        last_hidden = outputs.hidden_states[-1]  # [B, L, W]
+        last_hidden = outputs.last_hidden_state  # [B, L, W]
         if attention_mask is None:
             pooled = last_hidden[:, -1, :]
         else:

@@ -61,7 +61,7 @@ class LeRobotPairDataset(IterableDataset):
         self.pair_prompt_style = pair_prompt_style
 
         self.lerobot_dataset = LeRobotDataset(dataset_dir, video_backend="pyav")
-        self.episodes_meta = self._load_episodes_metadata(max_episodes)
+        self.episodes_meta = self._load_episodes_metadata(self.lerobot_dataset, max_episodes)
         self.episodes_meta = self._split_train_val(self.episodes_meta, val_ratio, seed, split)
 
         print(
@@ -132,14 +132,14 @@ class LeRobotPairDataset(IterableDataset):
     def _construct_pairs_for_t(self, t: int, T: int, rng: np.random.Generator):
         forward_pairs = []
         forward_pairs.append((0, t, float(t / T), "anchor"))
-        if t >= self.pair_short_step:
-            forward_pairs.append((t - self.pair_short_step, t, float(self.pair_short_step / T), "short"))
-        if t >= self.pair_mid_step:
-            forward_pairs.append((t - self.pair_mid_step, t, float(self.pair_mid_step / T), "mid"))
-        forward_pairs.append((t, t, 0.0, "zero"))
-        if t >= self.pair_random_min:
-            r = int(rng.integers(self.pair_random_min, t + 1))
-            forward_pairs.append((t - r, t, float(r / T), "random"))
+        # if t >= self.pair_short_step:
+        #     forward_pairs.append((t - self.pair_short_step, t, float(self.pair_short_step / T), "short"))
+        # if t >= self.pair_mid_step:
+        #     forward_pairs.append((t - self.pair_mid_step, t, float(self.pair_mid_step / T), "mid"))
+        # forward_pairs.append((t, t, 0.0, "zero"))
+        # if t >= self.pair_random_min:
+        #     r = int(rng.integers(self.pair_random_min, t + 1))
+        #     forward_pairs.append((t - r, t, float(r / T), "random"))
         return forward_pairs
 
     def _process_pair_data(

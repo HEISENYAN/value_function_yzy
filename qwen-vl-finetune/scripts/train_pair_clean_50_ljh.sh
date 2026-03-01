@@ -1,7 +1,7 @@
 #!/bin/bash
-export WANDB_API_KEY=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
-export WANDB_PROJECT="value-function"
-export WANDB_ENTITY="heisen0928-the-hong-kong-polytechnic-university"
+export WANDB_API_KEY=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
+export WANDB_PROJECT="value-function-pair"
+export WANDB_ENTITY="fcdljh
 
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 MASTER_PORT=${MASTER_PORT:-$(shuf -i 20001-29999 -n 1)}
@@ -59,7 +59,7 @@ args="
     --gradient_checkpointing True \
     --dataloader_num_workers 8 \
     --logging_dir ${log_dir} \
-    --report_to tensorboard \
+    --report_to wandb \
     --logging_first_step True"
 
 torchrun --nproc_per_node=8 \
