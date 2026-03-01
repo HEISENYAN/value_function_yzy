@@ -7,7 +7,14 @@ from PIL import Image
 
 from torch.utils.data import IterableDataset, get_worker_info
 
+<<<<<<< HEAD
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+=======
+try:
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+except ImportError:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+>>>>>>> 5242e56008a742c514349ed33d2d51fecfa5b7ed
 
 PAIR_PROMPT_TEMPLATE = """You are a progress estimator for robot manipulation tasks.
 Given two sets of three-view observations at time t0 and time t1, estimate the signed progress change from t0 to t1.
@@ -70,38 +77,30 @@ class LeRobotPairDataset(IterableDataset):
             f"add_backward={self.pair_add_backward}"
         )
 
-    def _load_episodes_metadata(self, max_episodes: Optional[int]):
-        total_episodes = self.lerobot_dataset.num_episodes
+    def _load_episodes_metadata(self, lerobot_dataset, max_episodes):
+        """Load only LeRobot metadata information."""
+        total_episodes = lerobot_dataset.num_episodes
+        episodes = []
+
         if max_episodes is not None:
             total_episodes = min(total_episodes, max_episodes)
 
-        episodes_df = self.lerobot_dataset.meta.episodes
-        
-        episodes = []
         for ep_idx in range(total_episodes):
-            row = episodes_df.iloc[ep_idx] if hasattr(episodes_df, "iloc") else episodes_df[ep_idx]
-        
-            start_index = int(row["dataset_from_index"])
-            end_index = int(row["dataset_to_index"])
-            length = int(row["length"])
-            
-            instruction = row.get("task", row.get("tasks", self.language_instruction))
+            start_index = int(lerobot_dataset.episode_data_index["from"][ep_idx].item())
+            end_index = int(lerobot_dataset.episode_data_index["to"][ep_idx].item())
+            length = end_index - start_index
 
+            instruction = lerobot_dataset.meta.episodes[ep_idx].get("tasks")
             if isinstance(instruction, list) and len(instruction) > 0:
                 instruction = str(instruction[0])
-            elif instruction is None:
-                instruction = self.language_instruction
-            else:
-                instruction = str(instruction)
 
-            episodes.append(
-                {
-                    "episode_idx": ep_idx,
-                    "global_start_index": start_index,
-                    "length": int(length),
-                    "instruction": instruction,
-                }
-            )
+            episodes.append({
+                'episode_idx': ep_idx,
+                'global_start_index': start_index,
+                'length': length,
+                'instruction': instruction,
+            })
+
         return episodes
 
     def _split_train_val(self, episodes, val_ratio, seed, split):
