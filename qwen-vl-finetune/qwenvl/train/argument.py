@@ -14,9 +14,15 @@ class ModelArguments:
 class DataArguments:
     dataset_use: str = field(default="")
     eval_dataset_use: str = field(default="")
+    pair_mode: bool = field(default=False)
     val_ratio: float = field(default=0.1)
     data_flatten: bool = field(default=False)
     data_packing: bool = field(default=False)
+    pair_short_step: int = field(default=8)
+    pair_mid_step: int = field(default=16)
+    pair_random_min: int = field(default=1)
+    pair_add_backward: bool = field(default=True)
+    pair_prompt_style: str = field(default="explicit_t0_t1")
     base_interval: int = field(default=2)
     max_pixels: int = field(default=28 * 28 * 576)
     min_pixels: int = field(default=28 * 28 * 16)
@@ -37,6 +43,9 @@ class DataArguments:
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
+    value_head_lr: Optional[float] = field(default=None)
+    value_head_weight_decay: float = field(default=0.0)
+    pair_use_t_group_weight: bool = field(default=True)
     model_max_length: int = field(
         default=512,
         metadata={
