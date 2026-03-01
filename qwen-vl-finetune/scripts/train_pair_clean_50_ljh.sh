@@ -38,15 +38,15 @@ args="
     --tune_mm_llm True \
     --bf16 \
     --output_dir ${output_dir} \
-    --max_steps 100000 \
+    --max_steps 30000 \
     --per_device_train_batch_size ${batch_size} \
     --per_device_eval_batch_size ${batch_size} \
     --gradient_accumulation_steps ${grad_accum_steps} \
     --eval_strategy steps \
-    --eval_steps 100 \
+    --eval_steps 1000\
     --save_strategy steps \
-    --save_steps 500 \
-    --save_total_limit 5 \
+    --save_steps 3000 \
+    --save_total_limit 10 \
     --learning_rate ${lr} \
     --value_head_lr ${value_head_lr} \
     --value_head_weight_decay 0.0 \

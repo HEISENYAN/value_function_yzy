@@ -42,7 +42,7 @@ class LeRobotPairDataset(IterableDataset):
         max_episodes: Optional[int] = None,
         pair_short_step: int = 8,
         pair_mid_step: int = 16,
-        pair_random_min: int = 1,
+        pair_random_min: int = 8,
         pair_add_backward: bool = True,
         pair_prompt_style: str = "explicit_t0_t1",
     ) -> None:
@@ -136,10 +136,10 @@ class LeRobotPairDataset(IterableDataset):
         #     forward_pairs.append((t - self.pair_short_step, t, float(self.pair_short_step / T), "short"))
         # if t >= self.pair_mid_step:
         #     forward_pairs.append((t - self.pair_mid_step, t, float(self.pair_mid_step / T), "mid"))
-        # forward_pairs.append((t, t, 0.0, "zero"))
-        # if t >= self.pair_random_min:
-        #     r = int(rng.integers(self.pair_random_min, t + 1))
-        #     forward_pairs.append((t - r, t, float(r / T), "random"))
+        forward_pairs.append((t, t, 0.0, "zero"))
+        if t >= self.pair_random_min:
+            r = int(rng.integers(self.pair_random_min, t + 1))
+            forward_pairs.append((t - r, t, float(r / T), "random"))
         return forward_pairs
 
     def _process_pair_data(
@@ -253,14 +253,15 @@ class LeRobotPairDataset(IterableDataset):
         for ep in self.episodes_meta:
             T = ep["length"]
             for t in range(T):
-                n = 2  # anchor + zero
-                if t >= self.pair_short_step:
-                    n += 1
-                if t >= self.pair_mid_step:
-                    n += 1
+                n = 1  # anchor
+                # if t >= self.pair_short_step:
+                #     n += 1
+                # if t >= self.pair_mid_step:
+                #     n += 1
                 if t >= self.pair_random_min:
                     n += 1
                 if self.pair_add_backward:
                     n *= 2
+                n += 1 # zero
                 total += n
         return total
