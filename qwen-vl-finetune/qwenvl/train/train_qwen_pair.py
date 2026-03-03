@@ -29,15 +29,13 @@ def rank0_print(*args):
 
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
+    """Safe save that properly handles tied weights."""
     if trainer.deepspeed:
         torch.cuda.synchronize()
         trainer.save_model(output_dir)
         return
-    state_dict = trainer.model.state_dict()
-    if trainer.args.should_save:
-        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
-        del state_dict
-        trainer._save(output_dir, state_dict=cpu_state_dict)
+
+    trainer.save_model(output_dir)
 
 
 def set_backbone_trainable(model_args, backbone):
@@ -241,6 +239,20 @@ def train(attn_implementation=None):
         attn_implementation=attn_implementation,
         bf16=training_args.bf16,
     )
+
+    if model.backbone.config.tie_word_embeddings:
+        rank0_print("[INFO] Untying lm_head and embed_tokens weights to avoid safetensors error")
+        model.backbone.config.tie_word_embeddings = False
+
+        model.backbone.lm_head = nn.Linear(
+            model.backbone.config.hidden_size,
+            model.backbone.config.vocab_size,
+            bias=False
+        )
+
+        model.backbone.lm_head.weight.data = model.backbone.model.language_model.embed_tokens.weight.data.clone()
+        if local_rank == 0:
+            print("[INFO] Successfully untied weights")
     data_args.model_type = "qwen2.5vl"
     model.backbone.config.use_cache = False
 
@@ -301,7 +313,6 @@ def train(attn_implementation=None):
     model.backbone.config.use_cache = True
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
     processor.save_pretrained(training_args.output_dir)
-
 
 if __name__ == "__main__":
     train(attn_implementation=None)
