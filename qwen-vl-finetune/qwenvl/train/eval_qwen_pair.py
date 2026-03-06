@@ -14,7 +14,7 @@ from transformers import AutoProcessor
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from qwenvl.data.data_loader_pair import PAIR_PROMPT_TEMPLATE, LeRobotPairDataset
+from qwenvl.data.data_loader_pair_clean import PAIR_PROMPT_TEMPLATE, LeRobotPairDataset
 from qwenvl.train.argument import ModelArguments, DataArguments, EvalArguments
 
 
