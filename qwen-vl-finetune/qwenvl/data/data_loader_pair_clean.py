@@ -47,6 +47,8 @@ class LeRobotPairDataset(IterableDataset):
         pair_random_min: int = 8,
         pair_add_backward: bool = True,
         pair_prompt_style: str = "explicit_t0_t1",
+        rank: int = 0,
+        world_size: int = 1,
     ) -> None:
         super().__init__()
         self.dataset_dir = dataset_dir
@@ -55,6 +57,8 @@ class LeRobotPairDataset(IterableDataset):
         self.buffer_size = buffer_size
         self.camera_names = camera_names or ["cam_high", "cam_left_wrist", "cam_right_wrist"]
         self.split = split
+        self.rank = int(rank)
+        self.world_size = max(1, int(world_size))
 
         self.pair_short_step = int(pair_short_step)
         self.pair_mid_step = int(pair_mid_step)
@@ -74,9 +78,15 @@ class LeRobotPairDataset(IterableDataset):
             pass
 
         self.episodes_meta = self._split_train_val(self.episodes_meta, val_ratio, seed, split)
+        if self.world_size > 1:
+            # Keep one deterministic rank shard per process, then worker-level sharding is applied in __iter__.
+            self.episodes_meta = [
+                ep for i, ep in enumerate(self.episodes_meta) if i % self.world_size == self.rank
+            ]
 
         print(
-            f"[{split.upper()}] Pair dataset initialized. Episodes: {len(self.episodes_meta)}. "
+            f"[{split.upper()}] Pair dataset initialized. Episodes: {len(self.episodes_meta)} "
+            f"(rank {self.rank}/{self.world_size}). "
             f"short={self.pair_short_step}, mid={self.pair_mid_step}, random_min={self.pair_random_min}, "
             f"add_backward={self.pair_add_backward}"
         )
@@ -128,6 +138,11 @@ class LeRobotPairDataset(IterableDataset):
             self._lerobot_dataset = LeRobotDataset(self.dataset_dir, video_backend="pyav")
             self._init_pid = pid
         return self._lerobot_dataset
+
+    @property
+    def lerobot_dataset(self):
+        # Backward-compatible accessor used by eval scripts.
+        return self._get_lerobot_dataset()
 
     @staticmethod
     def _to_pil_image(img_data):
@@ -192,13 +207,6 @@ class LeRobotPairDataset(IterableDataset):
 
     def __iter__(self):
         worker_info = get_worker_info()
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            rank = int(torch.distributed.get_rank())
-            world_size = int(torch.distributed.get_world_size())
-        else:
-            rank = 0
-            world_size = 1
-
         if worker_info is None:
             worker_id = 0
             num_workers = 1
@@ -206,12 +214,13 @@ class LeRobotPairDataset(IterableDataset):
             worker_id = int(worker_info.id)
             num_workers = int(worker_info.num_workers)
 
-        global_worker_id = rank * num_workers + worker_id
-        global_num_workers = world_size * num_workers
         full_list = self.episodes_meta
-        my_episodes = [full_list[i] for i in range(global_worker_id, len(full_list), global_num_workers)]
+        per_worker = int(math.ceil(len(full_list) / float(num_workers))) if num_workers > 0 else len(full_list)
+        start_idx = worker_id * per_worker
+        end_idx = min(start_idx + per_worker, len(full_list))
+        my_episodes = list(full_list[start_idx:end_idx])
 
-        rng = np.random.default_rng(self.seed + global_worker_id)
+        rng = np.random.default_rng(self.seed + self.rank * 100000 + worker_id)
         rng.shuffle(my_episodes)
         buffer = []
         exception_counts: Dict[str, int] = {}
@@ -236,7 +245,9 @@ class LeRobotPairDataset(IterableDataset):
                             )
                         frame_cache[step][cam] = self._to_pil_image(raw_row[key])
 
-                ep_rng = np.random.default_rng(self.seed + ep_info["episode_idx"] * 9973 + global_worker_id)
+                ep_rng = np.random.default_rng(
+                    self.seed + ep_info["episode_idx"] * 9973 + self.rank * 100000 + worker_id
+                )
 
                 for t in range(length):
                     forward_pairs = self._construct_pairs_for_t(t, length, ep_rng)
@@ -272,13 +283,12 @@ class LeRobotPairDataset(IterableDataset):
                 exception_counts[exception_type] = exception_counts.get(exception_type, 0) + 1
                 exception_total += 1
                 print(
-                    f"[PAIR-ITER-ERROR] rank={rank} worker={worker_id}/{num_workers} "
-                    f"global_worker={global_worker_id}/{global_num_workers} "
+                    f"[PAIR-ITER-ERROR] rank={self.rank}/{self.world_size} worker={worker_id}/{num_workers} "
                     f"episode={ep_info.get('episode_idx')} type={exception_type} msg={e}"
                 )
                 if exception_total % 20 == 0:
                     print(
-                        f"[PAIR-ITER-ERROR-SUMMARY] rank={rank} worker={worker_id} "
+                        f"[PAIR-ITER-ERROR-SUMMARY] rank={self.rank} worker={worker_id} "
                         f"total={exception_total} by_type={exception_counts}"
                     )
                 traceback.print_exc()
@@ -286,7 +296,7 @@ class LeRobotPairDataset(IterableDataset):
 
         if exception_total > 0:
             print(
-                f"[PAIR-ITER-ERROR-FINAL] rank={rank} worker={worker_id} "
+                f"[PAIR-ITER-ERROR-FINAL] rank={self.rank} worker={worker_id} "
                 f"total={exception_total} by_type={exception_counts}"
             )
 
