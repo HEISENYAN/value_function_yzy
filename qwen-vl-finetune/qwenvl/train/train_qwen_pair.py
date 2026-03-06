@@ -302,7 +302,8 @@ def train(attn_implementation=None):
         args=training_args,
         **data_module,
     )
-
+    ckpt_list = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*"))
+    print(f"[DEBUG] output_dir={training_args.output_dir}, ckpts={ckpt_list}")
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         logging.info("checkpoint found, resume training")
         trainer.train(resume_from_checkpoint=True)

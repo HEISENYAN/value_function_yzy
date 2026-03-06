@@ -14,7 +14,7 @@ llm=Qwen/Qwen2.5-VL-3B-Instruct
 # datasets="/mnt/lijunhao/robotwin/adjust_bottle/aloha-agilex_clean_50"
 datasets="/mnt/bn/ic-vlm/zhufangqi/code/datasets/robotwin-50-50-clean"
 
-run_name="robotwin_clean_50_pair_v1"
+run_name="robotwin_clean_50_pair_v1_3_4"
 output_dir=./output/${run_name}
 log_dir=${output_dir}/runs
 
@@ -45,7 +45,7 @@ args="
     --eval_strategy steps \
     --eval_steps 1000000\
     --save_strategy steps \
-    --save_steps 500 \
+    --save_steps 100 \
     --save_total_limit 10 \
     --learning_rate ${lr} \
     --value_head_lr ${value_head_lr} \
@@ -57,8 +57,9 @@ args="
     --logging_steps 10 \
     --model_max_length 4096 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 8 \
-    --logging_dir ${run_name} \
+    --dataloader_num_workers 2 \
+    --dataloader_drop_last True \
+    --logging_dir ${log_dir} \
     --report_to wandb \
     --logging_first_step True"
 

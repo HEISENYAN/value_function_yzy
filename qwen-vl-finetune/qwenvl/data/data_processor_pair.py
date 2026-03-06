@@ -218,12 +218,13 @@ class FlattenedPairDataCollator(PairDataCollator):
 
 
 class IterableSupervisedPairDataset(IterableDataset):
-    def __init__(self, iterable_dataset, processor, data_args):
+    def __init__(self, iterable_dataset, processor, data_args, max_samples_per_epoch=None):
         super().__init__()
         self.iterable_dataset = iterable_dataset
         self.processor = update_processor_pixels(processor, data_args)
         self.tokenizer = processor.tokenizer
         self.data_args = data_args
+        self.max_samples_per_epoch = max_samples_per_epoch
         self.model_type = data_args.model_type
         if self.model_type == "qwen3vl":
             self.get_rope_index = get_rope_index_3
@@ -237,13 +238,25 @@ class IterableSupervisedPairDataset(IterableDataset):
         self.item_fn = self._get_packed_item if getattr(data_args, "data_packing", False) else self._get_item
 
     def __iter__(self):
+        yielded = 0
         for item in iter(self.iterable_dataset):
+            if self.max_samples_per_epoch is not None and yielded >= self.max_samples_per_epoch:
+                break
             try:
                 yield self.item_fn([item])
+                yielded += 1
             except Exception as e:
                 logging.warning(f"Error processing pair item: {e}")
                 traceback.print_exc()
                 continue
+
+    def __len__(self):
+        if hasattr(self.iterable_dataset, "__len__"):
+            base_len = len(self.iterable_dataset)
+            if self.max_samples_per_epoch is None:
+                return base_len
+            return min(base_len, self.max_samples_per_epoch)
+        raise TypeError("Underlying iterable_dataset does not implement __len__")
 
     def _get_item(self, sources) -> Dict[str, torch.Tensor]:
         data_dict = preprocess_qwen_visual_pair(sources, self.processor)
@@ -363,9 +376,29 @@ def _resolve_dataset_path(path: str) -> str:
     raise FileNotFoundError(f"Dataset path not found: {path}")
 
 
+def _sync_min_len_across_ranks(local_len: int) -> int:
+    if not torch.distributed.is_initialized():
+        return int(local_len)
+
+    backend = torch.distributed.get_backend()
+    if backend == "nccl":
+        device = torch.device("cuda", torch.cuda.current_device())
+    else:
+        device = torch.device("cpu")
+
+    t = torch.tensor([int(local_len)], dtype=torch.long, device=device)
+    torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.MIN)
+    return int(t.item())
+
+
 def make_supervised_data_module(processor, data_args, model_args=None, value_tokenizer=None) -> Dict:
     global local_rank
-    local_rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    if torch.distributed.is_initialized():
+        local_rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+    else:
+        local_rank = 0
+        world_size = 1
     data_args.model_type = getattr(data_args, "model_type", "qwen2.5vl")
 
     dataset_paths = [path.strip() for path in data_args.dataset_use.split(",") if path.strip()]
@@ -386,13 +419,28 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             pair_random_min=getattr(data_args, "pair_random_min", 1),
             pair_add_backward=getattr(data_args, "pair_add_backward", True),
             pair_prompt_style=getattr(data_args, "pair_prompt_style", "explicit_t0_t1"),
+            rank=local_rank,
+            world_size=world_size,
         )
 
     if len(dataset_paths) == 1:
         dataset_dir = _resolve_dataset_path(dataset_paths[0])
         rank0_print(f"Loading pair dataset from: {dataset_dir}")
-        train_dataset = IterableSupervisedPairDataset(create_pair_dataset(dataset_dir, "train"), processor, data_args)
-        eval_dataset = IterableSupervisedPairDataset(create_pair_dataset(dataset_dir, "val"), processor, data_args)
+        le_train = create_pair_dataset(dataset_dir, "train")
+        le_val = create_pair_dataset(dataset_dir, "val")
+
+        train_min_len = _sync_min_len_across_ranks(len(le_train))
+        eval_min_len = _sync_min_len_across_ranks(len(le_val))
+        rank0_print(
+            f"[PairDataset] synchronized per-rank lengths: train_min_len={train_min_len}, eval_min_len={eval_min_len}"
+        )
+
+        train_dataset = IterableSupervisedPairDataset(
+            le_train, processor, data_args, max_samples_per_epoch=train_min_len
+        )
+        eval_dataset = IterableSupervisedPairDataset(
+            le_val, processor, data_args, max_samples_per_epoch=eval_min_len
+        )
     else:
         train_parts = []
         val_parts = []

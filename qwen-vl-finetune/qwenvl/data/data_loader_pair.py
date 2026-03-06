@@ -45,6 +45,8 @@ class LeRobotPairDataset(IterableDataset):
         pair_random_min: int = 8,
         pair_add_backward: bool = True,
         pair_prompt_style: str = "explicit_t0_t1",
+        rank: int = 0,
+        world_size: int = 1,
     ) -> None:
         super().__init__()
         self.dataset_dir = dataset_dir
@@ -53,6 +55,8 @@ class LeRobotPairDataset(IterableDataset):
         self.buffer_size = buffer_size
         self.camera_names = camera_names or ["cam_high", "cam_left_wrist", "cam_right_wrist"]
         self.split = split
+        self.rank = int(rank)
+        self.world_size = max(1, int(world_size))
 
         self.pair_short_step = int(pair_short_step)
         self.pair_mid_step = int(pair_mid_step)
@@ -60,12 +64,19 @@ class LeRobotPairDataset(IterableDataset):
         self.pair_add_backward = bool(pair_add_backward)
         self.pair_prompt_style = pair_prompt_style
 
-        self.lerobot_dataset = LeRobotDataset(dataset_dir, video_backend="pyav")
-        self.episodes_meta = self._load_episodes_metadata(self.lerobot_dataset, max_episodes)
+        # Avoid sharing pyav-backed dataset state across forked dataloader workers.
+        # We only use a temporary instance here to read metadata.
+        meta_dataset = LeRobotDataset(dataset_dir, video_backend="pyav")
+        self.episodes_meta = self._load_episodes_metadata(meta_dataset, max_episodes)
         self.episodes_meta = self._split_train_val(self.episodes_meta, val_ratio, seed, split)
+        # Shard by rank so each GPU only iterates 1/world_size of data (avoids NCCL collective timeout)
+        if self.world_size > 1:
+            self.episodes_meta = [
+                ep for i, ep in enumerate(self.episodes_meta) if i % self.world_size == self.rank
+            ]
 
         print(
-            f"[{split.upper()}] Pair dataset initialized. Episodes: {len(self.episodes_meta)}. "
+            f"[{split.upper()}] Pair dataset initialized. Episodes: {len(self.episodes_meta)} (rank {self.rank}/{self.world_size}). "
             f"short={self.pair_short_step}, mid={self.pair_mid_step}, random_min={self.pair_random_min}, "
             f"add_backward={self.pair_add_backward}"
         )
@@ -173,6 +184,9 @@ class LeRobotPairDataset(IterableDataset):
         }
 
     def __iter__(self):
+        # Construct dataset lazily inside each worker process to avoid pyav/ffmpeg
+        # decoder state being inherited from the parent process.
+        lerobot_dataset = LeRobotDataset(self.dataset_dir, video_backend="pyav")
         worker_info = get_worker_info()
         if worker_info is None:
             my_episodes = list(self.episodes_meta)
@@ -197,20 +211,19 @@ class LeRobotPairDataset(IterableDataset):
                     continue
 
                 frame_cache: Dict[int, Dict[str, Image.Image]] = {}
-                for step in range(length):
-                    raw_row = self.lerobot_dataset[start + step]
-                    frame_cache[step] = {}
+                ep_rng = np.random.default_rng(self.seed + ep_info["episode_idx"] * 9973 + worker_id)
+
+                for t in range(length):
+                    raw_row = lerobot_dataset[start + t]
+                    frame_cache[t] = {}
                     for cam in self.camera_names:
                         key = f"observation.images.{cam}"
                         if key not in raw_row:
                             raise ValueError(
-                                f"Missing required camera data: {key} in episode {ep_info['episode_idx']} step {step}"
+                                f"Missing required camera data: {key} in episode {ep_info['episode_idx']} step {t}"
                             )
-                        frame_cache[step][cam] = self._to_pil_image(raw_row[key])
+                        frame_cache[t][cam] = self._to_pil_image(raw_row[key])
 
-                ep_rng = np.random.default_rng(self.seed + ep_info["episode_idx"] * 9973 + worker_id)
-
-                for t in range(length):
                     forward_pairs = self._construct_pairs_for_t(t, length, ep_rng)
                     n_pairs_at_t = len(forward_pairs) * (2 if self.pair_add_backward else 1)
                     t_group_weight = 1.0 / max(1, n_pairs_at_t)
