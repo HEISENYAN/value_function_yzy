@@ -13,7 +13,7 @@ from collections.abc import Sequence as SequenceABC
 from torch.utils.data import IterableDataset
 
 from .rope2d import get_rope_index_25, get_rope_index_2, get_rope_index_3
-from .data_loader_pair import LeRobotPairDataset
+from .data_loader_pair_clean import LeRobotPairDataset
 
 IGNORE_INDEX = -100
 
@@ -377,7 +377,7 @@ def make_supervised_data_module(processor, data_args, model_args=None, value_tok
             dataset_dir=dataset_dir,
             split=split,
             val_ratio=getattr(data_args, "val_ratio", 0.1),
-            seed=getattr(data_args, "seed", 42) + local_rank + seed_offset,
+            seed=getattr(data_args, "seed", 42) + seed_offset,
             buffer_size=getattr(data_args, "buffer_size", 5000),
             camera_names=getattr(data_args, "camera_names", ["cam_high", "cam_left_wrist", "cam_right_wrist"]),
             max_episodes=getattr(data_args, "max_train_episodes", None) if split == "train" else None,
