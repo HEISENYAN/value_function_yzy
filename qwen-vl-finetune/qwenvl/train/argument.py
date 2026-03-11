@@ -13,20 +13,20 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     dataset_use: str = field(default="")
-    eval_dataset_use: str = field(default="")
-    pair_mode: bool = field(default=False)
-    val_ratio: float = field(default=0.1)
     data_flatten: bool = field(default=False)
     data_packing: bool = field(default=False)
-    pair_short_step: int = field(default=8)
-    pair_mid_step: int = field(default=16)
-    pair_random_min: int = field(default=1)
+    pair_mode: bool = field(default=False)
+    pair_data_backend: str = field(default="map")
     pair_add_backward: bool = field(default=True)
-    pair_prompt_style: str = field(default="explicit_t0_t1")
+    pair_add_zero_anchor: Optional[bool] = field(default=None)
+    pair_target_column: Optional[str] = field(default=None)
+    pair_prompt_style: str = field(default="current_history_delta")
+    camera_names: str = field(default="cam_high,cam_left_wrist,cam_right_wrist")
+    val_ratio: float = field(default=0.1)
+    max_episodes: Optional[int] = field(default=None)
     base_interval: int = field(default=2)
     max_pixels: int = field(default=28 * 28 * 576)
     min_pixels: int = field(default=28 * 28 * 16)
-    image_size: Optional[int] = field(default=None)
     video_max_frames: Optional[int] = field(default=8)
     video_min_frames: Optional[int] = field(default=4)
     video_max_pixels: int = field(default=1024 * 28 * 28)
@@ -43,9 +43,6 @@ class DataArguments:
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
-    value_head_lr: Optional[float] = field(default=None)
-    value_head_weight_decay: float = field(default=0.0)
-    pair_use_t_group_weight: bool = field(default=True)
     model_max_length: int = field(
         default=512,
         metadata={
@@ -54,23 +51,14 @@ class TrainingArguments(transformers.TrainingArguments):
     )
     mm_projector_lr: Optional[float] = None
     vision_tower_lr: Optional[float] = None
+    value_head_lr: Optional[float] = None
+    value_head_weight_decay: float = field(default=0.0)
+    pair_use_t_group_weight: bool = field(default=True)
+    save_format: str = field(default="hf")
+    save_interval: Optional[int] = field(default=None)
 
     ## Lora config
     lora_enable: bool = field(default=False)
     lora_r: int = field(default=64)
     lora_alpha: int = field(default=128)
     lora_dropout: float = field(default=0.0)
-
-    # IterableDataset configuration
-    def __post_init__(self):
-        if self.accelerator_config is None:
-            from transformers.trainer_pt_utils import AcceleratorConfig
-            self.accelerator_config = AcceleratorConfig(dispatch_batches=False)
-
-        super().__post_init__()
-
-
-@dataclass
-class EvalArguments:
-    eval_output_dir: str = field(default="./eval_output")
-    max_episodes: Optional[int] = field(default=None)

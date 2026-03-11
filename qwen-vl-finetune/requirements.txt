@@ -15,6 +15,6 @@ mpi4py
 opencv-python
 matplotlib
 tensorboard
-lerobot @ git+https://github.com/huggingface/lerobot.git@2b71789e15c35418b1ccecbceb81f4a598bfd883
+lerobot @ git+https://github.com/huggingface/lerobot.git@33cad37054c2b594ceba57463e8f11ee374fa93c
 tyro
 huggingface_hub
